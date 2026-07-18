@@ -1,4 +1,4 @@
-# Tambo — A TUI for Mise
+# A TUI for Mise
 
 A lazygit-style terminal UI for [mise](https://mise.jdx.dev), a polyglot runtime manager. Tambo provides an interactive, keyboard-driven interface to manage tools, versions, tasks, and environments without typing `mise` commands manually.
 
