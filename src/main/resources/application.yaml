@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: tambo
+  main:
+    banner-mode: off
+    log-startup-info: false
+    # Only instantiate beans when the TUI actually needs them — faster startup.
+    lazy-initialization: true
+  threads:
+    virtual:
+      # Java 25 virtual threads for Spring-managed executors.
+      enabled: true
+
+logging:
+  level:
+    root: warn

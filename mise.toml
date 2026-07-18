@@ -1,0 +1,7 @@
+[tools]
+java = "temurin-25.0.3+9.0.LTS"
+maven = "3.9.16"
+
+[tasks.compile]
+description = "Maven task for compile project"
+
