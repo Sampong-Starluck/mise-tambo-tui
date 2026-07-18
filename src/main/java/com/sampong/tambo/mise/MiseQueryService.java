@@ -1,9 +1,5 @@
 package com.sampong.tambo.mise;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -25,23 +21,21 @@ import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
 
 /**
- * Higher-level facade over {@link MiseCli}: turns raw {@code mise} CLI output into
- * typed data the TUI can render, and exposes the mutating operations (install,
- * uninstall, run task, use) as simple blocking calls the caller offloads to a
- * background thread.
+ * Read-only queries against {@code mise}: turns raw CLI output (mostly {@code -J}
+ * JSON) into typed data the TUI can render. Never mutates any mise state —
+ * mutating operations live in {@link MiseToolService} and
+ * {@link MiseMaintenanceService}.
  */
 @Service
-public class MiseService {
+public class MiseQueryService {
 
     private final MiseCli cli;
     private final ObjectMapper mapper;
 
-    public MiseService(MiseCli cli, ObjectMapper mapper) {
+    public MiseQueryService(MiseCli cli, ObjectMapper mapper) {
         this.cli = cli;
         this.mapper = mapper;
     }
-
-    // ==================== Read-only state ====================
 
     public List<ToolVersion> listTools() {
         MiseCli.Result result = cli.run(List.of("ls", "-J"));
@@ -66,7 +60,8 @@ public class MiseService {
                             v.active));
                 }
             }
-            tools.sort(Comparator.comparing(ToolVersion::tool).thenComparing(ToolVersion::version));
+            tools.sort(Comparator.comparing((ToolVersion t) -> t.tool())
+                    .thenComparing((ToolVersion t) -> t.version()));
             return tools;
         } catch (Exception e) {
             return List.of();
@@ -79,9 +74,8 @@ public class MiseService {
             return List.of();
         }
         try {
-            List<MiseTask> tasks = mapper.readValue(result.stdout(), new TypeReference<List<MiseTask>>() {
+            return mapper.readValue(result.stdout(), new TypeReference<List<MiseTask>>() {
             });
-            return tasks;
         } catch (Exception e) {
             return List.of();
         }
@@ -135,7 +129,8 @@ public class MiseService {
         return versions;
     }
 
-    public DoctorInfo doctor() {
+    /** A compact health summary parsed out of {@code mise doctor} plain-text output. */
+    public DoctorInfo doctorSummary() {
         MiseCli.Result result = cli.run(List.of("doctor"));
         String version = "unknown";
         boolean activated = false;
@@ -149,6 +144,10 @@ public class MiseService {
                     version = line.substring("version:".length()).strip();
                 } else if (line.startsWith("activated:")) {
                     activated = line.substring("activated:".length()).strip().equalsIgnoreCase("yes");
+                } else if (line.startsWith("MISE_SHELL=")) {
+                    // Windows doctor output has no "activated:" line; an inherited
+                    // MISE_SHELL env var means the launching shell ran `mise activate`.
+                    activated = true;
                 } else if (line.startsWith("shims_on_path:")) {
                     shimsOnPath = line.substring("shims_on_path:".length()).strip().equalsIgnoreCase("yes");
                 } else if (line.startsWith("config_files:")) {
@@ -163,85 +162,6 @@ public class MiseService {
             }
         }
         return new DoctorInfo(version, activated, shimsOnPath, configFiles);
-    }
-
-    // ==================== Mutating operations ====================
-
-    public MiseCli.Result install(String toolAtVersion) {
-        return cli.run(List.of("install", toolAtVersion), Duration.ofMinutes(10));
-    }
-
-    public MiseCli.Result uninstall(String toolAtVersion) {
-        return cli.run(List.of("uninstall", toolAtVersion), Duration.ofMinutes(2));
-    }
-
-    public MiseCli.Result use(String toolAtVersion, boolean global) {
-        List<String> args = new ArrayList<>();
-        args.add("use");
-        if (global) {
-            args.add("-g");
-        }
-        args.add(toolAtVersion);
-        return cli.run(args, Duration.ofMinutes(10));
-    }
-
-    public MiseCli.Result runTask(String taskName) {
-        return cli.run(List.of("run", taskName), Duration.ofMinutes(15));
-    }
-
-    // ==================== Shell activation ====================
-
-    /** The result of installing mise activation into the user's shell rc file. */
-    public record ActivationOutcome(boolean ok, boolean changed, String message) {
-    }
-
-    /**
-     * Enables mise activation for future shells by appending the appropriate
-     * {@code mise activate} line to the user's shell rc file (detected from
-     * {@code $SHELL}; bash, zsh, and fish are recognized, anything else falls
-     * back to bash). Idempotent: does nothing when the rc file already
-     * mentions {@code mise activate}.
-     */
-    public ActivationOutcome activateInShell() {
-        String home = System.getProperty("user.home");
-        String shellEnv = System.getenv("SHELL");
-        String shell = (shellEnv == null || shellEnv.isBlank())
-                ? "bash"
-                : Path.of(shellEnv).getFileName().toString();
-
-        Path rc;
-        String line;
-        switch (shell) {
-            case "zsh" -> {
-                rc = Path.of(home, ".zshrc");
-                line = "eval \"$(mise activate zsh)\"";
-            }
-            case "fish" -> {
-                rc = Path.of(home, ".config", "fish", "config.fish");
-                line = "mise activate fish | source";
-            }
-            default -> {
-                shell = "bash";
-                rc = Path.of(home, ".bashrc");
-                line = "eval \"$(mise activate bash)\"";
-            }
-        }
-
-        try {
-            if (Files.exists(rc) && Files.readString(rc).contains("mise activate")) {
-                return new ActivationOutcome(true, false,
-                        "mise activation already present in " + rc + " — restart your shell if it isn't active yet");
-            }
-            if (rc.getParent() != null) {
-                Files.createDirectories(rc.getParent());
-            }
-            Files.writeString(rc, "\n# Added by tambo — activate mise\n" + line + "\n",
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            return new ActivationOutcome(true, true,
-                    "Added \"" + line + "\" to " + rc + " — restart your " + shell + " shell to finish");
-        } catch (IOException e) {
-            return new ActivationOutcome(false, false, "Could not update " + rc + ": " + e.getMessage());
-        }
     }
 
     // ==================== JSON DTOs ====================

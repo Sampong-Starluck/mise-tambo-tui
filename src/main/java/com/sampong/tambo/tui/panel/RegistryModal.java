@@ -191,7 +191,7 @@ public final class RegistryModal {
     }
 
     private List<RegistryEntry> fuzzyTools(String query) {
-        return Fuzzy.filter(query, ctx.state().registry(), RegistryEntry::shortName, RegistryEntry::description);
+        return Fuzzy.filter(query, ctx.state().registry(), e -> e.shortName(), e -> e.description());
     }
 
     // ==================== Key handling ====================

@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
+import dev.tamboui.layout.Constraint;
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.app.ToolkitApp;
 import dev.tamboui.toolkit.element.Element;
@@ -21,7 +22,13 @@ import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.TuiConfig;
 import dev.tamboui.tui.event.KeyEvent;
 
-import com.sampong.tambo.mise.MiseService;
+import java.nio.file.Path;
+
+import com.sampong.tambo.mise.MiseMaintenanceService;
+import com.sampong.tambo.mise.MiseQueryService;
+import com.sampong.tambo.mise.MiseToolService;
+import com.sampong.tambo.mise.ShellActivationService;
+import com.sampong.tambo.tui.panel.ConfigEditorModal;
 import com.sampong.tambo.tui.panel.DetailPanel;
 import com.sampong.tambo.tui.panel.EnvPanel;
 import com.sampong.tambo.tui.panel.HelpOverlay;
@@ -49,6 +56,11 @@ import com.sampong.tambo.tui.panel.ToolsPanel;
 public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     private static final int SIDEBAR_WIDTH = 44;
+    /** Below this terminal height the sidebar collapses unfocused panels to their title bar. */
+    private static final int ACCORDION_HEIGHT = 28;
+    /** A collapsed panel: just the top border with the title, plus the bottom border. */
+    private static final int COLLAPSED_HEIGHT = 2;
+    private static final int STATUS_HEIGHT = 7;
 
     private final UiState state;
     private final MiseActions actions;
@@ -60,11 +72,15 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final DetailPanel detailPanel;
     private final LogPanel logPanel;
     private final RegistryModal registryModal;
+    private final ConfigEditorModal configEditor;
     private final HelpOverlay helpOverlay;
 
-    public MiseTuiApp(MiseService mise, @Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
+    public MiseTuiApp(MiseQueryService query, MiseToolService tools,
+                      MiseMaintenanceService maintenance, ShellActivationService activation,
+                      @Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
         this.state = new UiState();
-        this.actions = new MiseActions(mise, executor, state, r -> runner().runOnRenderThread(r));
+        this.actions = new MiseActions(query, tools, maintenance, activation,
+                executor, state, r -> runner().runOnRenderThread(r));
 
         this.statusPanel = new StatusPanel(this);
         this.toolsPanel = new ToolsPanel(this);
@@ -73,6 +89,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.detailPanel = new DetailPanel(this, toolsPanel, tasksPanel);
         this.logPanel = new LogPanel(this);
         this.registryModal = new RegistryModal(this);
+        this.configEditor = new ConfigEditorModal(this);
         this.helpOverlay = new HelpOverlay(this);
     }
 
@@ -105,7 +122,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     public boolean modalOpen() {
-        return !registryModal.isOpen();
+        return !registryModal.isOpen() && !configEditor.isOpen();
     }
 
     // ==================== Lifecycle ====================
@@ -135,9 +152,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 }
                 return EventResult.HANDLED;
             }
-            if (registryModal.isOpen()) {
-                // The modal's input box is focused and consumes everything it needs;
-                // never let panel shortcuts fire underneath it.
+            if (registryModal.isOpen() || configEditor.isOpen()) {
+                // The modal's input box / text area is focused and consumes everything
+                // it needs; never let panel shortcuts fire underneath it.
                 return EventResult.UNHANDLED;
             }
             if (key.isChar('?')) {
@@ -150,6 +167,22 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
             }
             if (key.isChar('A')) {
                 actions.activateMise();
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('e')) {
+                configEditor.open(Path.of("mise.toml"), "./mise.toml");
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('E')) {
+                configEditor.open(globalConfigPath(), "global config.toml");
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('D')) {
+                actions.runDoctor();
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('U')) {
+                actions.selfUpdate();
                 return EventResult.HANDLED;
             }
             if (key.isChar('1')) {
@@ -194,16 +227,54 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         if (registryModal.isOpen()) {
             return stack(body, registryModal.build());
         }
+        if (configEditor.isOpen()) {
+            return stack(body, configEditor.build());
+        }
         return body;
     }
 
+    /** The user-level mise config file, honoring {@code MISE_CONFIG_DIR} when set. */
+    private static Path globalConfigPath() {
+        String configDir = System.getenv("MISE_CONFIG_DIR");
+        return configDir != null && !configDir.isBlank()
+                ? Path.of(configDir, "config.toml")
+                : Path.of(System.getProperty("user.home"), ".config", "mise", "config.toml");
+    }
+
     private Column buildSidebar() {
+        if (terminalHeight() >= ACCORDION_HEIGHT) {
+            return column(
+                    statusPanel.build().constraint(length(STATUS_HEIGHT)),
+                    toolsPanel.build().constraint(fill(3)),
+                    envPanel.build().constraint(fill(1)),
+                    tasksPanel.build().constraint(fill(2))
+            );
+        }
+        // lazygit-style accordion for cramped terminals: the focused panel gets all
+        // the space, every other panel collapses to just its title bar.
+        String focus = focusedId();
+        String expanded = switch (focus) {
+            case PanelIds.STATUS, PanelIds.ENV, PanelIds.TASKS -> focus;
+            case null, default -> PanelIds.TOOLS;
+        };
         return column(
-                statusPanel.build().constraint(length(7)),
-                toolsPanel.build().constraint(fill(3)),
-                envPanel.build().constraint(fill(1)),
-                tasksPanel.build().constraint(fill(2))
+                statusPanel.build().constraint(sidebarConstraint(expanded, PanelIds.STATUS, length(STATUS_HEIGHT))),
+                toolsPanel.build().constraint(sidebarConstraint(expanded, PanelIds.TOOLS, fill())),
+                envPanel.build().constraint(sidebarConstraint(expanded, PanelIds.ENV, fill())),
+                tasksPanel.build().constraint(sidebarConstraint(expanded, PanelIds.TASKS, fill()))
         );
+    }
+
+    private static Constraint sidebarConstraint(String expandedId, String panelId, Constraint whenExpanded) {
+        return panelId.equals(expandedId) ? whenExpanded : length(COLLAPSED_HEIGHT);
+    }
+
+    private int terminalHeight() {
+        try {
+            return runner().tuiRunner().terminal().size().height();
+        } catch (Exception e) {
+            return Integer.MAX_VALUE; // size unavailable — keep the normal layout
+        }
     }
 
     private Column buildMainColumn() {
@@ -229,6 +300,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         String hints;
         if (registryModal.isOpen()) {
             hints = registryModal.footerHint();
+        } else if (configEditor.isOpen()) {
+            hints = configEditor.footerHint();
         } else {
             String focus = focusedId();
             hints = switch (focus) {
@@ -241,7 +314,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         return row(
                 text(" " + hints).fg(Color.CYAN),
                 spacer(),
-                text("a add sdk   r refresh   ? help   q quit ").dim()
+                text("a add sdk   e edit config   A activate   D doctor   U update   r refresh   ? help   q quit ").dim()
         );
     }
 }

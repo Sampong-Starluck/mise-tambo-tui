@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.RegistryEntry;
@@ -115,18 +114,6 @@ public final class UiState {
         log.addLast(new LogEntry(level, text));
         while (log.size() > MAX_LOG) {
             log.removeFirst();
-        }
-    }
-
-    /** Appends the tail of a command's stdout/stderr to the log (task output, etc). */
-    public void addCommandOutput(MiseCli.Result result) {
-        String combined = result.stdout() + (result.stderr().isBlank() ? "" : "\n" + result.stderr());
-        String[] outLines = combined.split("\n");
-        int start = Math.max(0, outLines.length - 20);
-        for (int i = start; i < outLines.length; i++) {
-            if (!outLines[i].isBlank()) {
-                addLog(result.ok() ? LogLevel.INFO : LogLevel.ERROR, outLines[i].stripTrailing());
-            }
         }
     }
 }

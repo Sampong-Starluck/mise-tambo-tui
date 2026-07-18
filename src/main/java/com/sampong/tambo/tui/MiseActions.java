@@ -1,5 +1,8 @@
 package com.sampong.tambo.tui;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -8,7 +11,10 @@ import java.util.function.Supplier;
 import org.springframework.core.task.AsyncTaskExecutor;
 
 import com.sampong.tambo.mise.MiseCli;
-import com.sampong.tambo.mise.MiseService;
+import com.sampong.tambo.mise.MiseMaintenanceService;
+import com.sampong.tambo.mise.MiseQueryService;
+import com.sampong.tambo.mise.MiseToolService;
+import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.RegistryEntry;
@@ -17,7 +23,8 @@ import com.sampong.tambo.mise.model.ToolVersion;
 /**
  * All mise operations the UI can trigger. Every call returns immediately: the
  * blocking CLI work runs on the injected executor (virtual threads), and results
- * are published back into {@link UiState} on the render thread.
+ * are published back into {@link UiState} on the render thread. Long-running
+ * commands stream their output into the command log live, line by line.
  */
 public final class MiseActions {
 
@@ -26,14 +33,22 @@ public final class MiseActions {
                             Map<String, String> env, DoctorInfo doctor) {
     }
 
-    private final MiseService mise;
+    private final MiseQueryService query;
+    private final MiseToolService tools;
+    private final MiseMaintenanceService maintenance;
+    private final ShellActivationService activation;
     private final AsyncTaskExecutor executor;
     private final UiState state;
     /** Marshals a runnable onto the TUI render thread. */
     private final Consumer<Runnable> uiThread;
 
-    public MiseActions(MiseService mise, AsyncTaskExecutor executor, UiState state, Consumer<Runnable> uiThread) {
-        this.mise = mise;
+    public MiseActions(MiseQueryService query, MiseToolService tools,
+                       MiseMaintenanceService maintenance, ShellActivationService activation,
+                       AsyncTaskExecutor executor, UiState state, Consumer<Runnable> uiThread) {
+        this.query = query;
+        this.tools = tools;
+        this.maintenance = maintenance;
+        this.activation = activation;
         this.executor = executor;
         this.state = state;
         this.uiThread = uiThread;
@@ -44,7 +59,7 @@ public final class MiseActions {
     public void loadInitial() {
         submitBackground("initial load",
                 () -> {
-                    List<RegistryEntry> registry = mise.listRegistry();
+                    List<RegistryEntry> registry = query.listRegistry();
                     Snapshot snapshot = takeSnapshot();
                     return Map.entry(registry, snapshot);
                 },
@@ -69,7 +84,7 @@ public final class MiseActions {
     }
 
     private Snapshot takeSnapshot() {
-        return new Snapshot(mise.listTools(), mise.listTasks(), mise.listEnv(), mise.doctor());
+        return new Snapshot(query.listTools(), query.listTasks(), query.listEnv(), query.doctorSummary());
     }
 
     private void applySnapshot(Snapshot snapshot) {
@@ -88,7 +103,7 @@ public final class MiseActions {
         }
         state.addLog(LogLevel.CMD, "$ mise install " + key);
         submitBackground("install " + key,
-                () -> mise.install(key),
+                () -> tools.install(key, liveLogLine()),
                 result -> {
                     state.clearBusy(key);
                     logResult(result, "Installed " + key, "Install failed: " + key);
@@ -103,7 +118,7 @@ public final class MiseActions {
         }
         state.addLog(LogLevel.CMD, "$ mise uninstall " + key);
         submitBackground("uninstall " + key,
-                () -> mise.uninstall(key),
+                () -> tools.uninstall(key),
                 result -> {
                     state.clearBusy(key);
                     logResult(result, "Uninstalled " + key, "Uninstall failed: " + key);
@@ -123,10 +138,13 @@ public final class MiseActions {
         String args = global ? "mise use -g " + toolAtVersion : "mise use " + toolAtVersion;
         state.addLog(LogLevel.CMD, "$ " + args);
         submitBackground(args,
-                () -> mise.use(toolAtVersion, global),
+                () -> tools.use(toolAtVersion, global, liveLogLine()),
                 result -> {
                     state.clearBusy(key);
-                    logResult(result, "Installed & configured " + toolAtVersion, "Failed: " + args);
+                    logResult(result,
+                            global ? "Set " + toolAtVersion + " as global default"
+                                    : "Applied " + toolAtVersion + " to ./mise.toml",
+                            "Failed: " + args);
                     refresh();
                 });
     }
@@ -140,30 +158,94 @@ public final class MiseActions {
         }
         state.addLog(LogLevel.CMD, "$ mise run " + t.name());
         submitBackground("run " + t.name(),
-                () -> mise.runTask(t.name()),
+                () -> tools.runTask(t.name(), liveLogLine()),
                 result -> {
                     state.clearBusy(key);
-                    state.addCommandOutput(result);
                     logResult(result, "Task \"" + t.name() + "\" finished", "Task \"" + t.name() + "\" failed");
                 });
     }
 
     // ==================== Shell activation ====================
 
-    /** Installs the {@code mise activate} line into the user's shell rc file. */
+    /** Installs the {@code mise activate} line into the user's shell startup file. */
     public void activateMise() {
         String key = "activate";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise activate — writing the activation line to your shell rc");
+        state.addLog(LogLevel.CMD, "$ mise activate — writing the activation line to your shell profile");
         submitBackground("activate",
-                mise::activateInShell,
+                activation::activateInShell,
                 outcome -> {
                     state.clearBusy(key);
                     LogLevel level = !outcome.ok() ? LogLevel.ERROR : outcome.changed() ? LogLevel.OK : LogLevel.INFO;
                     state.addLog(level, outcome.message());
                     refresh();
+                });
+    }
+
+    // ==================== Maintenance ====================
+
+    /** Streams the full {@code mise doctor} report into the command log. */
+    public void runDoctor() {
+        String key = "doctor";
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ mise doctor");
+        submitBackground("doctor",
+                () -> maintenance.doctor(liveLogLine()),
+                result -> {
+                    state.clearBusy(key);
+                    logResult(result, "mise doctor: no problems found", "mise doctor found problems");
+                });
+    }
+
+    /** Runs {@code mise self-update}, streaming progress into the command log. */
+    public void selfUpdate() {
+        String key = "self-update";
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ mise self-update");
+        submitBackground("self-update",
+                () -> maintenance.selfUpdate(liveLogLine()),
+                result -> {
+                    state.clearBusy(key);
+                    logResult(result, "mise is up to date", "Self-update failed");
+                    refresh();
+                });
+    }
+
+    // ==================== Config files ====================
+
+    /** Writes edited config content to disk, then refreshes so mise picks it up. */
+    public void saveConfig(Path file, String content) {
+        String key = "save:" + file;
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "Saving " + file + "…");
+        submitBackground("save " + file,
+                () -> {
+                    try {
+                        if (file.getParent() != null) {
+                            Files.createDirectories(file.getParent());
+                        }
+                        Files.writeString(file, content);
+                        return "";
+                    } catch (IOException e) {
+                        return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    }
+                },
+                error -> {
+                    state.clearBusy(key);
+                    if (error.isEmpty()) {
+                        state.addLog(LogLevel.OK, "Saved " + file);
+                        refresh();
+                    } else {
+                        state.addLog(LogLevel.ERROR, "Could not save " + file + ": " + error);
+                    }
                 });
     }
 
@@ -173,7 +255,7 @@ public final class MiseActions {
     public void fetchRemoteVersions(String tool, Consumer<List<String>> onDone) {
         state.addLog(LogLevel.CMD, "$ mise ls-remote " + tool);
         submitBackground("ls-remote " + tool,
-                () -> mise.listRemoteVersions(tool),
+                () -> query.listRemoteVersions(tool),
                 versions -> {
                     state.addLog(LogLevel.OK, (versions.size() - 1) + " versions of " + tool + " available");
                     onDone.accept(versions);
@@ -181,6 +263,18 @@ public final class MiseActions {
     }
 
     // ==================== Plumbing ====================
+
+    /**
+     * A line consumer for streaming commands: marshals every non-blank output line
+     * onto the render thread and appends it to the command log as it arrives.
+     */
+    private Consumer<String> liveLogLine() {
+        return line -> {
+            if (!line.isBlank()) {
+                uiThread.accept(() -> state.addLog(LogLevel.INFO, line));
+            }
+        };
+    }
 
     private <T> void submitBackground(String label, Supplier<T> work, Consumer<T> onDone) {
         executor.execute(() -> {

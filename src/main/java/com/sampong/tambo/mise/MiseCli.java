@@ -1,13 +1,17 @@
 package com.sampong.tambo.mise;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
 
@@ -21,6 +25,9 @@ import org.springframework.stereotype.Component;
 public class MiseCli {
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(20);
+
+    /** ANSI escape sequences (colors, cursor movement) that mise may emit even when piped. */
+    private static final Pattern ANSI = Pattern.compile("\\x1B\\[[;\\d]*[ -/]*[@-~]");
 
     /** The result of running a {@code mise} subcommand. */
     public record Result(int exitCode, String stdout, String stderr) {
@@ -76,6 +83,76 @@ public class MiseCli {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
             return new Result(-1, "", "Interrupted while running mise " + String.join(" ", args));
+        }
+    }
+
+    /**
+     * Runs {@code mise} with stdout and stderr merged, invoking {@code onLine} for every
+     * line as it is produced so callers can render live progress. Lines are stripped of
+     * ANSI escapes and carriage returns before delivery. {@code onLine} is called on a
+     * background reader thread — callers must marshal to their own thread if needed.
+     * The returned {@link Result} carries the full combined output as stdout.
+     */
+    public Result runStreaming(List<String> args, Duration timeout, Consumer<String> onLine) {
+        List<String> command = new ArrayList<>();
+        command.add("mise");
+        command.addAll(args);
+
+        Process process;
+        try {
+            process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        } catch (IOException e) {
+            return new Result(-1, "", "Failed to launch mise: " + e.getMessage());
+        }
+
+        StringBuilder captured = new StringBuilder();
+        try {
+            process.getOutputStream().close();
+
+            CompletableFuture<Void> reader = CompletableFuture.runAsync(() -> {
+                try (BufferedReader in = new BufferedReader(
+                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = in.readLine()) != null) {
+                        String clean = cleanLine(line);
+                        synchronized (captured) {
+                            captured.append(clean).append('\n');
+                        }
+                        onLine.accept(clean);
+                    }
+                } catch (IOException ignored) {
+                    // Stream closes when the process dies; nothing more to read.
+                }
+            });
+
+            boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                reader.join();
+                return new Result(-1, capturedText(captured),
+                        "Timed out after " + timeout.getSeconds() + "s: mise " + String.join(" ", args));
+            }
+            reader.join();
+            return new Result(process.exitValue(), capturedText(captured), "");
+        } catch (IOException e) {
+            return new Result(-1, capturedText(captured), "Failed to run mise: " + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            process.destroyForcibly();
+            return new Result(-1, capturedText(captured), "Interrupted while running mise " + String.join(" ", args));
+        }
+    }
+
+    /** Strips ANSI escapes and keeps only the final state of {@code \r}-overwritten progress lines. */
+    private static String cleanLine(String line) {
+        String noAnsi = ANSI.matcher(line).replaceAll("");
+        int lastCr = noAnsi.lastIndexOf('\r');
+        return (lastCr >= 0 ? noAnsi.substring(lastCr + 1) : noAnsi).stripTrailing();
+    }
+
+    private static String capturedText(StringBuilder captured) {
+        synchronized (captured) {
+            return captured.toString();
         }
     }
 
