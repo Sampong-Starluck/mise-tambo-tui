@@ -37,6 +37,7 @@ public final class EnvPanel {
                 .borderColor(PanelIds.ENV.equals(ctx.focusedId()) ? Color.GREEN : Color.DARK_GRAY)
                 .highlightColor(Color.CYAN)
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
+                .autoScroll()
                 .selected(index)
                 .onKeyEvent(event -> {
                     if (Ui.isNavKey(event)) {

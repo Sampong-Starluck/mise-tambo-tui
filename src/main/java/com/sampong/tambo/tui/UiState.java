@@ -11,6 +11,7 @@ import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
+import com.sampong.tambo.mise.model.TrustStatus;
 
 /**
  * Shared UI state: the mise data every panel renders from, the set of in-flight
@@ -28,12 +29,16 @@ public final class UiState {
     private List<RegistryEntry> registry = List.of();
     private Map<String, String> env = Map.of();
     private DoctorInfo doctor = DoctorInfo.unknown();
+    private List<TrustStatus> trust = List.of();
     private boolean loading = true;
 
     /** In-flight operations, keyed by an operation-specific id (e.g. "node@20" or "task:build"). */
     private final Set<String> busyKeys = new HashSet<>();
 
     private final Deque<LogEntry> log = new ArrayDeque<>();
+
+    /** Horizontal pan of the command-log viewport, in columns; 0 = no pan. */
+    private int logHScroll;
 
     // ==================== Data ====================
 
@@ -77,6 +82,19 @@ public final class UiState {
         this.doctor = doctor;
     }
 
+    public List<TrustStatus> trust() {
+        return trust;
+    }
+
+    public void trust(List<TrustStatus> trust) {
+        this.trust = trust;
+    }
+
+    /** True when no config directory reported by {@code mise trust --show} is untrusted. */
+    public boolean allTrusted() {
+        return trust.stream().allMatch(TrustStatus::trusted);
+    }
+
     public boolean loading() {
         return loading;
     }
@@ -106,14 +124,19 @@ public final class UiState {
         return log;
     }
 
-    public boolean logEmpty() {
-        return log.isEmpty();
-    }
-
     public void addLog(LogLevel level, String text) {
         log.addLast(new LogEntry(level, text));
         while (log.size() > MAX_LOG) {
             log.removeFirst();
         }
+    }
+
+    public int logHScroll() {
+        return logHScroll;
+    }
+
+    /** Pans the log viewport horizontally; never negative, capped by LogPanel per frame. */
+    public void logHScroll(int columns) {
+        this.logHScroll = Math.max(0, columns);
     }
 }

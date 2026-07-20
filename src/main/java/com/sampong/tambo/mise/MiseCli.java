@@ -13,6 +13,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -28,6 +30,13 @@ public class MiseCli {
 
     /** ANSI escape sequences (colors, cursor movement) that mise may emit even when piped. */
     private static final Pattern ANSI = Pattern.compile("\\x1B\\[[;\\d]*[ -/]*[@-~]");
+
+    private final AsyncTaskExecutor executor;
+
+    /** Reads stdout/stderr on the same virtual-thread executor the rest of the app uses. */
+    public MiseCli(@Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
+        this.executor = executor;
+    }
 
     /** The result of running a {@code mise} subcommand. */
     public record Result(int exitCode, String stdout, String stderr) {
@@ -67,8 +76,10 @@ public class MiseCli {
         try {
             process.getOutputStream().close();
 
-            CompletableFuture<String> stdoutFuture = CompletableFuture.supplyAsync(() -> readAll(process.getInputStream()));
-            CompletableFuture<String> stderrFuture = CompletableFuture.supplyAsync(() -> readAll(process.getErrorStream()));
+            CompletableFuture<String> stdoutFuture =
+                    CompletableFuture.supplyAsync(() -> readAll(process.getInputStream()), executor);
+            CompletableFuture<String> stderrFuture =
+                    CompletableFuture.supplyAsync(() -> readAll(process.getErrorStream()), executor);
 
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
@@ -123,7 +134,7 @@ public class MiseCli {
                 } catch (IOException ignored) {
                     // Stream closes when the process dies; nothing more to read.
                 }
-            });
+            }, executor);
 
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {

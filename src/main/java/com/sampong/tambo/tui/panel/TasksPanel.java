@@ -44,6 +44,7 @@ public final class TasksPanel {
                 .borderColor(PanelIds.TASKS.equals(ctx.focusedId()) ? Color.GREEN : Color.DARK_GRAY)
                 .highlightColor(Color.CYAN)
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
+                .autoScroll()
                 .selected(index)
                 .onKeyEvent(event -> handleKey(event, items));
 
@@ -53,7 +54,7 @@ public final class TasksPanel {
             for (MiseTask t : items) {
                 boolean busy = ctx.state().isBusy("task:" + t.name());
                 list.add(row(
-                        text(busy ? "… " : "▷ ").fg(busy ? Color.YELLOW : Color.GREEN),
+                        text((busy ? Ui.spinner() : "▷") + " ").fg(busy ? Color.YELLOW : Color.GREEN),
                         text(t.name()).bold(),
                         spacer(),
                         text(t.description() == null ? "" : Ui.truncate(t.description(), 28) + " ").dim()

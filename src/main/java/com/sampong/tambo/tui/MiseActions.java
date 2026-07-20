@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -19,6 +20,7 @@ import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
+import com.sampong.tambo.mise.model.TrustStatus;
 
 /**
  * All mise operations the UI can trigger. Every call returns immediately: the
@@ -30,7 +32,8 @@ public final class MiseActions {
 
     /** Everything the dynamic panels render from, fetched in one background pass. */
     private record Snapshot(List<ToolVersion> tools, List<MiseTask> tasks,
-                            Map<String, String> env, DoctorInfo doctor) {
+                            Map<String, String> env, DoctorInfo doctor,
+                            List<TrustStatus> trust) {
     }
 
     private final MiseQueryService query;
@@ -59,9 +62,11 @@ public final class MiseActions {
     public void loadInitial() {
         submitBackground("initial load",
                 () -> {
-                    List<RegistryEntry> registry = query.listRegistry();
+                    // Forked before takeSnapshot() blocks on its own futures, so all six
+                    // independent `mise` invocations run concurrently on virtual threads.
+                    CompletableFuture<List<RegistryEntry>> registryFuture = supplyAsync(query::listRegistry);
                     Snapshot snapshot = takeSnapshot();
-                    return Map.entry(registry, snapshot);
+                    return Map.entry(registryFuture.join(), snapshot);
                 },
                 loaded -> {
                     state.registry(loaded.getKey());
@@ -83,8 +88,18 @@ public final class MiseActions {
                 });
     }
 
+    /** Fetches all five independent `mise` calls concurrently on virtual threads. */
     private Snapshot takeSnapshot() {
-        return new Snapshot(query.listTools(), query.listTasks(), query.listEnv(), query.doctorSummary());
+        CompletableFuture<List<ToolVersion>> tools = supplyAsync(query::listTools);
+        CompletableFuture<List<MiseTask>> tasks = supplyAsync(query::listTasks);
+        CompletableFuture<Map<String, String>> env = supplyAsync(query::listEnv);
+        CompletableFuture<DoctorInfo> doctor = supplyAsync(query::doctorSummary);
+        CompletableFuture<List<TrustStatus>> trust = supplyAsync(query::trustStatus);
+        return new Snapshot(tools.join(), tasks.join(), env.join(), doctor.join(), trust.join());
+    }
+
+    private <T> CompletableFuture<T> supplyAsync(Supplier<T> work) {
+        return CompletableFuture.supplyAsync(work, executor);
     }
 
     private void applySnapshot(Snapshot snapshot) {
@@ -92,6 +107,7 @@ public final class MiseActions {
         state.tasks(snapshot.tasks());
         state.env(snapshot.env());
         state.doctor(snapshot.doctor());
+        state.trust(snapshot.trust());
     }
 
     // ==================== Tool operations ====================
@@ -180,6 +196,23 @@ public final class MiseActions {
                     state.clearBusy(key);
                     LogLevel level = !outcome.ok() ? LogLevel.ERROR : outcome.changed() ? LogLevel.OK : LogLevel.INFO;
                     state.addLog(level, outcome.message());
+                    refresh();
+                });
+    }
+
+    /** Runs {@code mise trust} so mise is allowed to parse this project's config. */
+    public void trustProject() {
+        String key = "trust";
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ mise trust");
+        submitBackground("trust",
+                maintenance::trust,
+                result -> {
+                    state.clearBusy(key);
+                    logResult(result, "Config trusted — mise will now load this project's mise.toml",
+                            "mise trust failed");
                     refresh();
                 });
     }

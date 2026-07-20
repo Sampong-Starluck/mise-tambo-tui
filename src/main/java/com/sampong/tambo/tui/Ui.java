@@ -59,6 +59,21 @@ public final class Ui {
         return value ? text("yes").fg(Color.GREEN) : text("no").fg(Color.DARK_GRAY);
     }
 
+    private static final String[] SPINNER_FRAMES =
+            {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+
+    /**
+     * A braille spinner frame chosen from the wall clock (~80ms per frame, the
+     * cli-spinners convention for this glyph set). Stateless by design: the app
+     * re-renders on every tick, and a fresh element tree is built each time, so
+     * anything the panel tried to remember between frames would be discarded —
+     * deriving the frame from {@code now} instead means there's nothing to lose.
+     */
+    public static String spinner() {
+        int frame = (int) ((System.currentTimeMillis() / 80) % SPINNER_FRAMES.length);
+        return SPINNER_FRAMES[frame];
+    }
+
     public static String nullToDash(String s) {
         return (s == null || s.isBlank()) ? "-" : s;
     }

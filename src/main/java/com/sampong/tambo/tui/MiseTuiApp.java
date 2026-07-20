@@ -20,8 +20,13 @@ import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.elements.Column;
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.TuiConfig;
+import dev.tamboui.tui.bindings.BindingSets;
+import dev.tamboui.tui.bindings.Bindings;
 import dev.tamboui.tui.event.KeyEvent;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
 import com.sampong.tambo.mise.MiseMaintenanceService;
@@ -60,7 +65,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private static final int ACCORDION_HEIGHT = 28;
     /** A collapsed panel: just the top border with the title, plus the bottom border. */
     private static final int COLLAPSED_HEIGHT = 2;
-    private static final int STATUS_HEIGHT = 7;
+    private static final int STATUS_HEIGHT = 8;
 
     private final UiState state;
     private final MiseActions actions;
@@ -129,7 +134,24 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     protected TuiConfig configure() {
-        return TuiConfig.builder().mouseCapture(true).build();
+        return TuiConfig.builder().mouseCapture(true).bindings(navBindings()).build();
+    }
+
+    /**
+     * Standard bindings plus j/k on moveUp/moveDown, so panels whose built-in list
+     * handling does the scrolling (the command log) accept vim keys like the panels
+     * that translate them by hand in {@link Ui#applyNav}. Not the full vim set:
+     * vim bindings would also claim g/G/x, which are mise actions here.
+     */
+    private static Bindings navBindings() {
+        String overlay = "moveUp = Up, k\nmoveDown = Down, j\n";
+        try {
+            return BindingSets.load(
+                    new ByteArrayInputStream(overlay.getBytes(StandardCharsets.UTF_8)),
+                    BindingSets.standard());
+        } catch (IOException e) {
+            return BindingSets.standard(); // unreachable: the stream is in-memory
+        }
     }
 
     @Override
@@ -169,6 +191,10 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 actions.activateMise();
                 return EventResult.HANDLED;
             }
+            if (key.isChar('T')) {
+                actions.trustProject();
+                return EventResult.HANDLED;
+            }
             if (key.isChar('e')) {
                 configEditor.open(Path.of("mise.toml"), "./mise.toml");
                 return EventResult.HANDLED;
@@ -199,6 +225,10 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
             }
             if (key.isChar('4')) {
                 focus(PanelIds.TASKS);
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('5')) {
+                focus(PanelIds.LOG);
                 return EventResult.HANDLED;
             }
             if (key.isChar('r') && !key.hasCtrl()) {
@@ -308,13 +338,14 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 case PanelIds.TOOLS -> "↑/↓ j/k select   i install   u use in project   x uninstall   g set global";
                 case PanelIds.TASKS -> "↑/↓ j/k select   enter run task";
                 case PanelIds.ENV -> "↑/↓ j/k scroll";
-                case null, default -> "1-4 jump   tab cycle";
+                case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
+                case null, default -> "1-5 jump   tab cycle";
             };
         }
         return row(
                 text(" " + hints).fg(Color.CYAN),
                 spacer(),
-                text("a add sdk   e edit config   A activate   D doctor   U update   r refresh   ? help   q quit ").dim()
+                text("a add sdk   e edit config   A activate   T trust   D doctor   U update   r refresh   ? help   q quit ").dim()
         );
     }
 }

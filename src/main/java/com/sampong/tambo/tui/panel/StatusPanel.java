@@ -23,11 +23,15 @@ public final class StatusPanel {
 
     public Panel build() {
         DoctorInfo doctor = ctx.state().doctor();
+        boolean trusted = ctx.state().allTrusted();
         return panel("1 Status",
                 row(text("mise    ").dim(), text(doctor.version()).bold()),
                 doctor.activated()
                         ? row(text("active  ").dim(), Ui.badge(true))
                         : row(text("active  ").dim(), Ui.badge(false), text("  press A to activate").yellow()),
+                trusted
+                        ? row(text("trust   ").dim(), Ui.badge(true))
+                        : row(text("trust   ").dim(), Ui.badge(false), text("  press T to trust").yellow()),
                 row(text("shims   ").dim(), Ui.badge(doctor.shimsOnPath())),
                 row(text("configs ").dim(), text(String.valueOf(doctor.configFileCount())))
         ).id(PanelIds.STATUS).focusable(ctx.modalOpen())

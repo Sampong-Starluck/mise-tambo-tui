@@ -46,6 +46,7 @@ public final class ToolsPanel {
                 .borderColor(PanelIds.TOOLS.equals(ctx.focusedId()) ? Color.GREEN : Color.DARK_GRAY)
                 .highlightColor(Color.CYAN)
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
+                .autoScroll()
                 .selected(index)
                 .onKeyEvent(event -> handleKey(event, items));
 

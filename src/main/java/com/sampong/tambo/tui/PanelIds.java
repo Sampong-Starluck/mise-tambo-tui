@@ -7,6 +7,7 @@ public final class PanelIds {
     public static final String TOOLS = "panel-tools";
     public static final String ENV = "panel-env";
     public static final String TASKS = "panel-tasks";
+    public static final String LOG = "panel-log";
     public static final String MODAL_INPUT = "registry-modal-input";
     public static final String CONFIG_EDITOR = "config-editor";
 

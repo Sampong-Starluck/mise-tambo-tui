@@ -9,10 +9,10 @@
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>com.sampong</groupId>
-    <artifactId>tambo</artifactId>
+    <artifactId>mise-tambo</artifactId>
     <version>0.0.1</version>
-    <name>tambo</name>
-    <description>tambo</description>
+    <name>mise-tambo</name>
+    <description>A Spring CLI application for mise-en-place with TamboUI</description>
 
     <properties>
         <java.version>25</java.version>
@@ -66,6 +66,11 @@
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
         </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -92,6 +97,39 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!-- Maven's own default-test binding sets JUnit-Platform uid-tracking via the
+                 deprecated systemProperties element; that config comes from the lifecycle's
+                 default bindings, not POM inheritance, so overriding it here only merges
+                 alongside the original instead of replacing it. maven.test.skip already
+                 means this execution never runs anything, so disable it outright instead
+                 of fighting the merge — this drops the warning along with it. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- GraalVM native image: build with `mvnw -Pnative native:compile` (the
+                 parent's `native` profile binds process-aot and reachability metadata).
+                 Requires GraalVM as JAVA_HOME and the MSVC C++ toolchain on Windows. -->
+            <plugin>
+                <groupId>org.graalvm.buildtools</groupId>
+                <artifactId>native-maven-plugin</artifactId>
+                <configuration>
+                    <buildArgs>
+                        <!-- TamboUI's Panama backend uses the FFM API for terminal I/O -->
+                        <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
+                        <!-- WindowsTerminal allocates with Arena.ofShared(), which native
+                             image only supports when this (experimental) flag is on -->
+                        <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
+                        <buildArg>-H:+SharedArenaSupport</buildArg>
+                    </buildArgs>
                 </configuration>
             </plugin>
         </plugins>
