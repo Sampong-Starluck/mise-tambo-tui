@@ -1,10 +1,12 @@
-package com.sampong.tambo.tui;
+package com.sampong.tambo.tui.features;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Function;
+
+import org.jspecify.annotations.Nullable;
 
 /**
  * A small fzf-style fuzzy matcher: the query must appear as a subsequence of the
@@ -22,7 +24,7 @@ public final class Fuzzy {
      *         (higher is better), or {@code -1} when it does not match at all.
      *         The empty query matches everything with score {@code 0}.
      */
-    public static int score(String query, String candidate) {
+    public static int score(@Nullable String query, @Nullable String candidate) {
         if (query == null || query.isEmpty()) {
             return 0;
         }
@@ -64,10 +66,10 @@ public final class Fuzzy {
      * key, falling back to a (lower-weighted) secondary key. Order is preserved for
      * the empty query, and stable within equal scores otherwise.
      */
-    public static <T> List<T> filter(String query,
+    public static <T> List<T> filter(@Nullable String query,
                                      List<T> items,
                                      Function<T, String> primary,
-                                     Function<T, String> secondary) {
+                                     @Nullable Function<T, String> secondary) {
         if (query == null || query.isBlank()) {
             return items;
         }

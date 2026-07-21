@@ -8,4 +8,4 @@ run = "mvn clean install"
 
 [tasks.compile-native]
 description = "Maven task for compile project to native image"
-run = "mvn clean install -Pnative"
+run = "mvn -Pnative clean native:compile"

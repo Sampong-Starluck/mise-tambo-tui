@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.length;
@@ -19,10 +19,14 @@ import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
 
 import com.sampong.tambo.mise.model.RegistryEntry;
-import com.sampong.tambo.tui.Fuzzy;
-import com.sampong.tambo.tui.PanelIds;
-import com.sampong.tambo.tui.Ui;
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.features.Fuzzy;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * The "Add SDK" modal: step 1 fuzzy-finds an SDK in the mise registry by typing
@@ -31,6 +35,7 @@ import com.sampong.tambo.tui.UiContext;
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
+@RequiredArgsConstructor
 public final class RegistryModal {
 
     private static final int VISIBLE_ROWS = 12;
@@ -38,6 +43,7 @@ public final class RegistryModal {
 
     private enum Step { TOOL, VERSION }
 
+    @NonNull
     private final UiContext ctx;
 
     private boolean open;
@@ -45,15 +51,11 @@ public final class RegistryModal {
     private final TextInputState search = new TextInputState();
     private String lastQuery = "";
     private int index;
-    private RegistryEntry tool;
+    private @Nullable RegistryEntry tool;
     private List<String> remoteVersions = List.of();
     private boolean versionsLoading;
     private boolean installGlobal;
-    private String preOpenFocus;
-
-    public RegistryModal(UiContext ctx) {
-        this.ctx = ctx;
-    }
+    private @Nullable String preOpenFocus;
 
     public boolean isOpen() {
         return open;
@@ -191,7 +193,10 @@ public final class RegistryModal {
     }
 
     private List<RegistryEntry> fuzzyTools(String query) {
-        return Fuzzy.filter(query, ctx.state().registry(), e -> e.shortName(), e -> e.description());
+        // Match on the short name first, then fall back to description + backends so
+        // typing a backend (e.g. "cargo", "npm", "ubi") narrows the list too.
+        return Fuzzy.filter(query, ctx.state().registry(), RegistryEntry::shortName,
+                e -> Ui.nullToDash(e.description()) + " " + e.backendSummary());
     }
 
     // ==================== Key handling ====================

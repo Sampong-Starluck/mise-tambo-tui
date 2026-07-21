@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui;
+package com.sampong.tambo.tui.features;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -7,6 +7,10 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Turns off the Windows console's QuickEdit mode for the duration of the TUI.
@@ -21,6 +25,7 @@ import java.lang.invoke.MethodHandle;
  * Everything is best-effort: on a non-Windows OS, without a real console
  * (piped stdin), or on any FFM failure, calls are silent no-ops.
  */
+@Slf4j
 public final class WindowsConsoleMouse {
 
     private static final int STD_INPUT_HANDLE = -10;
@@ -35,7 +40,7 @@ public final class WindowsConsoleMouse {
      * mode so {@link #restore(Integer)} can put it back on exit, or null when
      * nothing was changed.
      */
-    public static Integer disableQuickEdit() {
+    public static @Nullable Integer disableQuickEdit() {
         if (notWindows()) {
             return null;
         }
@@ -55,13 +60,14 @@ public final class WindowsConsoleMouse {
                 return null;
             }
             return mode;
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            log.debug("QuickEdit mode unavailable in this console: {}", t.getMessage());
             return null; // mouse simply stays unavailable in this console
         }
     }
 
     /** Restores a console mode previously returned by {@link #disableQuickEdit()}. */
-    public static void restore(Integer previousMode) {
+    public static void restore(@Nullable Integer previousMode) {
         if (previousMode == null || notWindows()) {
             return;
         }
@@ -71,8 +77,8 @@ public final class WindowsConsoleMouse {
             if (handle != null) {
                 k32.setConsoleMode.invoke(handle, previousMode.intValue());
             }
-        } catch (Throwable ignored) {
-            // best-effort
+        } catch (Throwable t) {
+            log.debug("Failed to restore previous console mode: {}", t.getMessage());
         }
     }
 
@@ -99,7 +105,7 @@ public final class WindowsConsoleMouse {
         }
 
         /** The console input handle, or null when invalid. */
-        MemorySegment stdInputHandle() throws Throwable {
+        @Nullable MemorySegment stdInputHandle() throws Throwable {
             MemorySegment handle = (MemorySegment) getStdHandle.invoke(STD_INPUT_HANDLE);
             // INVALID_HANDLE_VALUE is -1; a null segment is address 0.
             return handle == null || handle.address() == 0 || handle.address() == -1 ? null : handle;

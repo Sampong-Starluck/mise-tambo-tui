@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui;
+package com.sampong.tambo.tui.state;
 
 /** Severity/category of a {@link LogEntry} shown in the command log panel. */
 public enum LogLevel {

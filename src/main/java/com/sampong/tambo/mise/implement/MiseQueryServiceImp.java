@@ -20,9 +20,15 @@ import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
+import com.sampong.tambo.mise.model.OutdatedTool;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
 import com.sampong.tambo.mise.model.TrustStatus;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Read-only queries against {@code mise}: turns raw CLI output (mostly {@code -J}
@@ -31,19 +37,18 @@ import com.sampong.tambo.mise.model.TrustStatus;
  * {@link com.sampong.tambo.mise.MiseMaintenanceService}.
  */
 @Service
+@RequiredArgsConstructor
 // Native image: these types are only ever reached through Jackson reflection,
 // so Spring AOT must be told to keep their constructors/accessors.
 @RegisterReflectionForBinding({MiseTask.class, RegistryEntry.class,
-        MiseQueryServiceImp.RawVersion.class, MiseQueryServiceImp.RawSource.class})
+        MiseQueryServiceImp.RawVersion.class, MiseQueryServiceImp.RawSource.class,
+        MiseQueryServiceImp.RawOutdated.class})
 public class MiseQueryServiceImp implements MiseQueryService {
 
+    @NonNull
     private final MiseCli cli;
+    @NonNull
     private final ObjectMapper mapper;
-
-    public MiseQueryServiceImp(MiseCli cli, ObjectMapper mapper) {
-        this.cli = cli;
-        this.mapper = mapper;
-    }
 
     @Override
     public List<ToolVersion> listTools() {
@@ -55,12 +60,19 @@ public class MiseQueryServiceImp implements MiseQueryService {
             Map<String, List<RawVersion>> raw = mapper.readValue(
                     result.stdout(), new TypeReference<Map<String, List<RawVersion>>>() {
                     });
+            if (raw == null) {
+                return List.of();
+            }
             List<ToolVersion> tools = new ArrayList<>();
             for (Map.Entry<String, List<RawVersion>> entry : raw.entrySet()) {
-                for (RawVersion v : entry.getValue()) {
+                List<RawVersion> versions = entry.getValue();
+                if (versions == null) {
+                    continue;
+                }
+                for (RawVersion v : versions) {
                     tools.add(new ToolVersion(
                             entry.getKey(),
-                            v.version,
+                            v.version != null ? v.version : "unknown",
                             v.requestedVersion,
                             v.installPath,
                             v.source != null ? v.source.type : null,
@@ -78,14 +90,44 @@ public class MiseQueryServiceImp implements MiseQueryService {
     }
 
     @Override
+    public List<OutdatedTool> listOutdated() {
+        MiseCli.Result result = cli.run(List.of("outdated", "-J"), Duration.ofSeconds(30));
+        if (!result.ok() || result.stdout().isBlank()) {
+            return List.of();
+        }
+        try {
+            Map<String, RawOutdated> raw = mapper.readValue(
+                    result.stdout(), new TypeReference<Map<String, RawOutdated>>() {
+                    });
+            if (raw == null) {
+                return List.of();
+            }
+            List<OutdatedTool> outdated = new ArrayList<>();
+            for (Map.Entry<String, RawOutdated> entry : raw.entrySet()) {
+                RawOutdated v = entry.getValue();
+                if (v == null) {
+                    continue;
+                }
+                // `name` is usually present; fall back to the map key.
+                String tool = v.name != null ? v.name : entry.getKey();
+                outdated.add(new OutdatedTool(tool, v.current, v.latest));
+            }
+            return outdated;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    @Override
     public List<MiseTask> listTasks() {
         MiseCli.Result result = cli.run(List.of("tasks", "ls", "-J"));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }
         try {
-            return mapper.readValue(result.stdout(), new TypeReference<List<MiseTask>>() {
+            List<MiseTask> tasks = mapper.readValue(result.stdout(), new TypeReference<List<MiseTask>>() {
             });
+            return tasks != null ? tasks : List.of();
         } catch (Exception e) {
             return List.of();
         }
@@ -98,8 +140,9 @@ public class MiseQueryServiceImp implements MiseQueryService {
             return List.of();
         }
         try {
-            return mapper.readValue(result.stdout(), new TypeReference<List<RegistryEntry>>() {
+            List<RegistryEntry> entries = mapper.readValue(result.stdout(), new TypeReference<List<RegistryEntry>>() {
             });
+            return entries != null ? entries : List.of();
         } catch (Exception e) {
             return List.of();
         }
@@ -114,14 +157,14 @@ public class MiseQueryServiceImp implements MiseQueryService {
         try {
             Map<String, String> raw = mapper.readValue(result.stdout(), new TypeReference<Map<String, String>>() {
             });
-            return new TreeMap<>(raw);
+            return raw != null ? new TreeMap<>(raw) : Map.of();
         } catch (Exception e) {
             return Map.of();
         }
     }
 
     @Override
-    public List<String> listRemoteVersions(String tool) {
+    public List<String> listRemoteVersions(@NonNull String tool) {
         List<String> versions = new ArrayList<>();
         versions.add("latest");
         MiseCli.Result result = cli.run(List.of("ls-remote", tool), Duration.ofSeconds(30));
@@ -232,19 +275,28 @@ public class MiseQueryServiceImp implements MiseQueryService {
     // from the @RegisterReflectionForBinding annotation on the outer class.
     @JsonIgnoreProperties(ignoreUnknown = true)
     static final class RawVersion {
-        public String version;
+        public @Nullable String version;
         @JsonProperty("requested_version")
-        public String requestedVersion;
+        public @Nullable String requestedVersion;
         @JsonProperty("install_path")
-        public String installPath;
-        public RawSource source;
+        public @Nullable String installPath;
+        public @Nullable RawSource source;
         public boolean installed;
         public boolean active;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     static final class RawSource {
-        public String type;
-        public String path;
+        public @Nullable String type;
+        public @Nullable String path;
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    static final class RawOutdated {
+        public @Nullable String name;
+        public @Nullable String current;
+        public @Nullable String latest;
+        @JsonProperty("requested")
+        public @Nullable String requested;
     }
 }

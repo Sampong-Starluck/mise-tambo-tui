@@ -4,17 +4,19 @@ import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * A task entry as reported by {@code mise tasks ls -J}.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record MiseTask(
         String name,
-        List<String> aliases,
-        String description,
-        String source,
-        List<String> depends,
-        List<String> run
+        @Nullable List<String> aliases,
+        @Nullable String description,
+        @Nullable String source,
+        @Nullable List<String> depends,
+        @Nullable List<String> run
 ) {
 
     public String aliasSummary() {

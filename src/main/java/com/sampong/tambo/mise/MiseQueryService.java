@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
+import com.sampong.tambo.mise.model.OutdatedTool;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
 import com.sampong.tambo.mise.model.TrustStatus;
@@ -18,6 +19,12 @@ import com.sampong.tambo.mise.model.TrustStatus;
 public interface MiseQueryService {
 
     List<ToolVersion> listTools();
+
+    /**
+     * Tools with a newer version available, via {@code mise outdated -J}. Empty
+     * when everything is current or the command is unavailable.
+     */
+    List<OutdatedTool> listOutdated();
 
     List<MiseTask> listTasks();
 

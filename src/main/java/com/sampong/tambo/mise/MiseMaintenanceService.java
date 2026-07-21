@@ -24,4 +24,13 @@ public interface MiseMaintenanceService {
      * (or the nearest parent) as trusted so mise is allowed to parse it.
      */
     MiseCli.Result trust();
+
+    /**
+     * Forces mise to parse the active config (via {@code mise config get}) so a
+     * broken edit surfaces immediately. A non-zero result carries the parse error.
+     */
+    MiseCli.Result validateConfig();
+
+    /** Runs {@code mise prune} to delete unused/old tool versions, streaming progress. */
+    MiseCli.Result prune(Consumer<String> onLine);
 }

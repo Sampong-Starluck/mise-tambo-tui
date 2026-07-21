@@ -1,15 +1,17 @@
 package com.sampong.tambo.mise.model;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * A single tool version entry as reported by {@code mise ls -J}.
  */
 public record ToolVersion(
         String tool,
         String version,
-        String requestedVersion,
-        String installPath,
-        String sourceType,
-        String sourcePath,
+        @Nullable String requestedVersion,
+        @Nullable String installPath,
+        @Nullable String sourceType,
+        @Nullable String sourcePath,
         boolean installed,
         boolean active
 ) {

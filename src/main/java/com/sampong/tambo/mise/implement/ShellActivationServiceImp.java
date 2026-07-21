@@ -11,6 +11,10 @@ import org.springframework.stereotype.Service;
 
 import com.sampong.tambo.mise.ShellActivationService;
 
+import org.jspecify.annotations.Nullable;
+
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * Enables {@code mise activate} for future shells by writing the activation line
  * into the user's shell startup file. Supported shells:
@@ -23,6 +27,7 @@ import com.sampong.tambo.mise.ShellActivationService;
  * </ul>
  * Idempotent: does nothing when the startup file already mentions {@code mise activate}.
  */
+@Slf4j
 @Service
 public class ShellActivationServiceImp implements ShellActivationService {
 
@@ -56,7 +61,7 @@ public class ShellActivationServiceImp implements ShellActivationService {
                 "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
     }
 
-    private String queryProfile(String shell) {
+    private @Nullable String queryProfile(String shell) {
         try {
             Process process = new ProcessBuilder(shell, "-NoProfile", "-Command", "Write-Output $PROFILE")
                     .redirectErrorStream(true)
@@ -69,7 +74,8 @@ public class ShellActivationServiceImp implements ShellActivationService {
             String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             return process.exitValue() == 0 ? out : null;
         } catch (IOException e) {
-            return null; // shell not installed / not on PATH
+            log.debug("{} not available to query $PROFILE: {}", shell, e.getMessage());
+            return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;

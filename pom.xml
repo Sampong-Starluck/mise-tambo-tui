@@ -56,6 +56,14 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
+        <!-- Nullability annotations (@NullMarked / @Nullable): annotation-only,
+             zero transitive deps, read by IDEs and static-analysis tooling. -->
+        <dependency>
+            <groupId>org.jspecify</groupId>
+            <artifactId>jspecify</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -117,7 +125,9 @@
             </plugin>
             <!-- GraalVM native image: build with `mvnw -Pnative native:compile` (the
                  parent's `native` profile binds process-aot and reachability metadata).
-                 Requires GraalVM as JAVA_HOME and the MSVC C++ toolchain on Windows. -->
+                 Requires GraalVM as JAVA_HOME and the MSVC C++ toolchain on Windows.
+                 For a profile-guided-optimized build, see the pgo-instrument /
+                 pgo-optimize profiles below. -->
             <plugin>
                 <groupId>org.graalvm.buildtools</groupId>
                 <artifactId>native-maven-plugin</artifactId>
@@ -129,10 +139,83 @@
                              image only supports when this (experimental) flag is on -->
                         <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
                         <buildArg>-H:+SharedArenaSupport</buildArg>
+                        <!-- Deliberately omitting the future-defaults flag GraalVM suggests:
+                             tried it, and it makes native-image fatally error on this
+                             project's fetched reachability-metadata ("Bulk queries can only
+                             be set with 'name' which does not allow run-time conditions") —
+                             some upstream metadata trips whatever conditional-reflection
+                             default it flips on. Revisit on a future GraalVM/plugin bump. -->
+                        <!-- Portable baseline CPU target: this binary gets built on one
+                             machine and may run on another, so we deliberately do not use
+                             -march=native (which ties the binary to the build machine's
+                             exact CPU and can crash with an illegal-instruction error
+                             elsewhere). -->
+                        <buildArg>-march=compatibility</buildArg>
+                        <!-- tambo's working set (tool/task/registry lists) is small; a fixed
+                             cap gives predictable memory use instead of the GC growing the
+                             heap on demand. Bump this if you manage a very large registry. -->
+                        <buildArg>-R:MaxHeapSize=128m</buildArg>
                     </buildArgs>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Profile-guided optimization, step 1: build an instrumented binary that
+             records which code paths actually run. Usage:
+               mvnw -Pnative,pgo-instrument native:compile
+               target/mise-tambo   (use it through a normal session, then quit)
+             This writes default.iprof into the project root. -->
+        <profile>
+            <id>pgo-instrument</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <configuration>
+                            <!-- combine.children="append": Maven's default plugin-config merge
+                                 REPLACES the base buildArgs list rather than adding to it, which
+                                 would silently drop the native-access/shared-arena flags this
+                                 build needs just to succeed. -->
+                            <buildArgs combine.children="append">
+                                <buildArg>--pgo-instrument</buildArg>
+                                <buildArg>-R:ProfilesDumpFile=${project.basedir}/default.iprof</buildArg>
+                                <!-- Scope instrumentation to our own code: unrestricted
+                                     instrumentation also injects counters into the FFM/Panama
+                                     upcall stub TamboUI generates for terminal I/O, which
+                                     crashes the Graal compiler backend (register-allocator
+                                     assertion in the generated stub). -->
+                                <buildArg>-H:ProfilingPackagePrefixes=com.sampong.tambo</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Profile-guided optimization, step 2: once default.iprof exists (from
+             pgo-instrument above), rebuild the real binary with it applied:
+               mvnw -Pnative,pgo-optimize native:compile
+             Re-run pgo-instrument and this step again if the workload changes
+             enough that the profile goes stale. -->
+        <profile>
+            <id>pgo-optimize</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.graalvm.buildtools</groupId>
+                        <artifactId>native-maven-plugin</artifactId>
+                        <configuration>
+                            <buildArgs combine.children="append">
+                                <buildArg>--pgo=${project.basedir}/default.iprof</buildArg>
+                            </buildArgs>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>

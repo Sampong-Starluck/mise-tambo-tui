@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.length;
@@ -8,18 +8,21 @@ import static dev.tamboui.toolkit.Toolkit.text;
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /** The {@code ?} key-reference overlay; remembers and restores focus around itself. */
+@RequiredArgsConstructor
 public final class HelpOverlay {
 
+    @NonNull
     private final UiContext ctx;
     private boolean open;
-    private String preOpenFocus;
-
-    public HelpOverlay(UiContext ctx) {
-        this.ctx = ctx;
-    }
+    private @Nullable String preOpenFocus;
 
     public boolean isOpen() {
         return open;
@@ -45,6 +48,7 @@ public final class HelpOverlay {
                 helpLine("1-5", "Jump to a panel (5 = command log)"),
                 helpLine("Tab / Shift+Tab", "Cycle panels"),
                 helpLine("Up/Down, j/k", "Move selection / scroll"),
+                helpLine("/", "Filter the focused list (Tools/Env/Tasks); Esc clears"),
                 helpLine("PgUp/PgDn", "Page up/down"),
                 helpLine("Left/Right, h/l", "Pan the command log horizontally"),
                 helpLine("End", "Log: resume following the newest entry"),
@@ -56,17 +60,27 @@ public final class HelpOverlay {
                 helpLine("T", "Trust this project's mise config (mise trust)"),
                 helpLine("D", "Run mise doctor — full report in the log"),
                 helpLine("U", "mise self-update"),
+                helpLine("X", "Prune unused/old tool versions (asks to confirm)"),
                 helpLine("i", "Install selected tool"),
                 helpLine("u", "Apply selected tool to project mise.toml"),
-                helpLine("x", "Uninstall selected tool"),
+                helpLine("x", "Uninstall selected tool (asks to confirm)"),
                 helpLine("g", "Install/set as global default"),
+                helpLine("p", "Upgrade selected tool to the newest version"),
+                helpLine("P", "Upgrade all outdated tools (asks to confirm)"),
                 helpLine("Enter", "Run selected task"),
+                helpLine(":", "Run selected task with arguments"),
+                helpLine(".", "Re-run the last task"),
+                helpLine("c", "Cancel the selected tool/task's running operation"),
+                helpLine("y", "Env panel: copy the selected variable's value"),
                 helpLine("r", "Refresh"),
                 helpLine("q", "Quit"),
                 helpLine("?", "Toggle this help"),
                 text(""),
                 text("In the Add SDK modal: type to fuzzy find, Enter to choose").dim(),
                 text("the SDK, then again for the version. Ctrl+G = local/global.").dim(),
+                text(""),
+                text("Config: ~/.config/tambo/tambo.properties (theme.* colours,").dim(),
+                text("keys.* nav overrides). $TAMBO_CONFIG_DIR overrides the path.").dim(),
                 text(""),
                 text("Press ? or Esc to close").dim()
         ).rounded().borderColor(Color.CYAN).width(64);

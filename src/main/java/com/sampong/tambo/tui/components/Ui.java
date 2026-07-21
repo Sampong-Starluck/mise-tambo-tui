@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.text;
 
@@ -6,6 +6,8 @@ import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+
+import org.jspecify.annotations.Nullable;
 
 /** Small stateless rendering / navigation helpers shared by all panels. */
 public final class Ui {
@@ -74,11 +76,11 @@ public final class Ui {
         return SPINNER_FRAMES[frame];
     }
 
-    public static String nullToDash(String s) {
+    public static String nullToDash(@Nullable String s) {
         return (s == null || s.isBlank()) ? "-" : s;
     }
 
-    public static String truncate(String s, int max) {
+    public static String truncate(@Nullable String s, int max) {
         if (s == null) {
             return "";
         }

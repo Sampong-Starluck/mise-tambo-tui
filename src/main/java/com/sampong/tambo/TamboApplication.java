@@ -14,7 +14,7 @@ import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.sampong.tambo.tui.MiseTuiApp;
-import com.sampong.tambo.tui.WindowsConsoleMouse;
+import com.sampong.tambo.tui.features.WindowsConsoleMouse;
 
 @SpringBootApplication
 @ImportRuntimeHints(TamboApplication.TamboUiResourceHints.class)

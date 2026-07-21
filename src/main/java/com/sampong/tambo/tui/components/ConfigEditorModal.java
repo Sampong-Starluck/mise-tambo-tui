@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.length;
@@ -15,9 +15,14 @@ import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextAreaState;
 
-import com.sampong.tambo.tui.LogLevel;
-import com.sampong.tambo.tui.PanelIds;
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.state.LogLevel;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * An in-app editor for mise config files ({@code ./mise.toml} or the global
@@ -27,32 +32,30 @@ import com.sampong.tambo.tui.UiContext;
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
+@RequiredArgsConstructor
 public final class ConfigEditorModal {
 
     private static final int EDITOR_ROWS = 20;
     private static final int WIDTH = 84;
 
+    @NonNull
     private final UiContext ctx;
 
     private boolean open;
-    private Path file;
+    private @Nullable Path file;
     private String title = "";
     private String originalText = "";
     private final TextAreaState buffer = new TextAreaState();
     private boolean confirmDiscard;
     private boolean newFile;
-    private String preOpenFocus;
-
-    public ConfigEditorModal(UiContext ctx) {
-        this.ctx = ctx;
-    }
+    private @Nullable String preOpenFocus;
 
     public boolean isOpen() {
         return open;
     }
 
     /** Opens the editor on a config file; logs an error and stays closed when it can't be read. */
-    public void open(Path file, String title) {
+    public void open(@NonNull Path file, @NonNull String title) {
         boolean exists = Files.exists(file);
         String content;
         try {

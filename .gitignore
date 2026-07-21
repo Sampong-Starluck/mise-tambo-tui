@@ -4,6 +4,11 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### GraalVM PGO ###
+# Runtime profile produced by an instrumented native build (see pom.xml);
+# machine/workload-specific, not something to commit.
+*.iprof
+
 ### STS ###
 .apt_generated
 .classpath

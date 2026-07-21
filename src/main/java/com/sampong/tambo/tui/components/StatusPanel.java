@@ -1,25 +1,24 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.panel;
 import static dev.tamboui.toolkit.Toolkit.row;
 import static dev.tamboui.toolkit.Toolkit.text;
 
-import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.elements.Panel;
 
 import com.sampong.tambo.mise.model.DoctorInfo;
-import com.sampong.tambo.tui.PanelIds;
-import com.sampong.tambo.tui.Ui;
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /** Panel 1 — mise health summary from {@code mise doctor}. */
+@RequiredArgsConstructor
 public final class StatusPanel {
 
+    @NonNull
     private final UiContext ctx;
-
-    public StatusPanel(UiContext ctx) {
-        this.ctx = ctx;
-    }
 
     public Panel build() {
         DoctorInfo doctor = ctx.state().doctor();
@@ -36,7 +35,7 @@ public final class StatusPanel {
                 row(text("configs ").dim(), text(String.valueOf(doctor.configFileCount())))
         ).id(PanelIds.STATUS).focusable(ctx.modalOpen())
                 .rounded()
-                .borderColor(Color.DARK_GRAY)
-                .focusedBorderColor(Color.GREEN);
+                .borderColor(ctx.theme().idle())
+                .focusedBorderColor(ctx.theme().focus());
     }
 }

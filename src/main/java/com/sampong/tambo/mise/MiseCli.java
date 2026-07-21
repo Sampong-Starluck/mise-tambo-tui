@@ -17,12 +17,18 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * Executes the {@code mise} CLI as a subprocess and captures its output.
  * <p>
  * Every call blocks the calling thread until the process exits or the timeout elapses,
  * so callers running this from a UI render loop must dispatch it to a background thread.
  */
+@Slf4j
 @Component
 public class MiseCli {
 
@@ -32,10 +38,13 @@ public class MiseCli {
     private static final Pattern ANSI = Pattern.compile("\\x1B\\[[;\\d]*[ -/]*[@-~]");
 
     private final AsyncTaskExecutor executor;
+    private final CancelRegistry cancelRegistry;
 
     /** Reads stdout/stderr on the same virtual-thread executor the rest of the app uses. */
-    public MiseCli(@Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
+    public MiseCli(@Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
+                   @NonNull CancelRegistry cancelRegistry) {
         this.executor = executor;
+        this.cancelRegistry = cancelRegistry;
     }
 
     /** The result of running a {@code mise} subcommand. */
@@ -57,11 +66,11 @@ public class MiseCli {
         }
     }
 
-    public Result run(List<String> args) {
+    public Result run(@NonNull List<String> args) {
         return run(args, DEFAULT_TIMEOUT);
     }
 
-    public Result run(List<String> args, Duration timeout) {
+    public Result run(@NonNull List<String> args, @NonNull Duration timeout) {
         List<String> command = new ArrayList<>();
         command.add("mise");
         command.addAll(args);
@@ -104,7 +113,18 @@ public class MiseCli {
      * background reader thread — callers must marshal to their own thread if needed.
      * The returned {@link Result} carries the full combined output as stdout.
      */
-    public Result runStreaming(List<String> args, Duration timeout, Consumer<String> onLine) {
+    public Result runStreaming(@NonNull List<String> args, @NonNull Duration timeout, @NonNull Consumer<String> onLine) {
+        return runStreaming(args, timeout, onLine, null);
+    }
+
+    /**
+     * Like {@link #runStreaming(List, Duration, Consumer)} but registers the running
+     * process under {@code cancelKey} in the {@link CancelRegistry} so the UI can
+     * terminate it early. A cancelled process exits non-zero, surfacing as a failed
+     * {@link Result}. Pass {@code null} to opt out of cancellation.
+     */
+    public Result runStreaming(@NonNull List<String> args, @NonNull Duration timeout,
+                               @NonNull Consumer<String> onLine, @Nullable String cancelKey) {
         List<String> command = new ArrayList<>();
         command.add("mise");
         command.addAll(args);
@@ -114,6 +134,10 @@ public class MiseCli {
             process = new ProcessBuilder(command).redirectErrorStream(true).start();
         } catch (IOException e) {
             return new Result(-1, "", "Failed to launch mise: " + e.getMessage());
+        }
+
+        if (cancelKey != null) {
+            cancelRegistry.register(cancelKey, process);
         }
 
         StringBuilder captured = new StringBuilder();
@@ -131,8 +155,8 @@ public class MiseCli {
                         }
                         onLine.accept(clean);
                     }
-                } catch (IOException ignored) {
-                    // Stream closes when the process dies; nothing more to read.
+                } catch (IOException e) {
+                    log.debug("Stream closed while reading mise output: {}", e.getMessage());
                 }
             }, executor);
 
@@ -151,6 +175,10 @@ public class MiseCli {
             Thread.currentThread().interrupt();
             process.destroyForcibly();
             return new Result(-1, capturedText(captured), "Interrupted while running mise " + String.join(" ", args));
+        } finally {
+            if (cancelKey != null) {
+                cancelRegistry.deregister(cancelKey);
+            }
         }
     }
 
@@ -171,6 +199,7 @@ public class MiseCli {
         try (in) {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
+            log.debug("Failed to read mise output stream: {}", e.getMessage());
             return "";
         }
     }

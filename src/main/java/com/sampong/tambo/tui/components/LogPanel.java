@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.list;
 import static dev.tamboui.toolkit.Toolkit.row;
@@ -15,10 +15,12 @@ import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.common.ScrollBarPolicy;
 
-import com.sampong.tambo.tui.LogEntry;
-import com.sampong.tambo.tui.PanelIds;
-import com.sampong.tambo.tui.Ui;
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.state.LogEntry;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Panel 5 — the command log: every {@code mise} invocation this app makes, echoed
@@ -29,6 +31,7 @@ import com.sampong.tambo.tui.UiContext;
  * horizontally. The mouse wheel scrolls vertically over the panel even when it
  * is not focused.
  */
+@RequiredArgsConstructor
 public final class LogPanel {
 
     /** Columns panned per ←/→ keypress. */
@@ -36,6 +39,7 @@ public final class LogPanel {
     /** Rows scrolled per mouse wheel tick. */
     private static final int WHEEL_STEP = 3;
 
+    @NonNull
     private final UiContext ctx;
 
     /**
@@ -48,10 +52,6 @@ public final class LogPanel {
     private int index;
     private boolean followTail = true;
 
-    public LogPanel(UiContext ctx) {
-        this.ctx = ctx;
-    }
-
     public ListElement<?> build() {
         int offset = clampToLongestLine(ctx.state().logHScroll());
         boolean focused = PanelIds.LOG.equals(ctx.focusedId());
@@ -62,7 +62,7 @@ public final class LogPanel {
         ListElement<?> list = list()
                 .title("5 Command Log" + (offset > 0 ? "  →" + offset : ""))
                 .rounded().id(PanelIds.LOG).focusable(ctx.modalOpen())
-                .borderColor(focused ? Color.GREEN : Color.DARK_GRAY)
+                .borderColor(focused ? ctx.theme().focus() : ctx.theme().idle())
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
                 .displayOnly().autoScroll()
                 .selected(index)

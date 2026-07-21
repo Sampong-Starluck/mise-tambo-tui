@@ -1,4 +1,4 @@
-package com.sampong.tambo.tui.panel;
+package com.sampong.tambo.tui.components;
 
 import static dev.tamboui.toolkit.Toolkit.column;
 import static dev.tamboui.toolkit.Toolkit.panel;
@@ -8,31 +8,30 @@ import static dev.tamboui.toolkit.Toolkit.text;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.elements.Panel;
 
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.ToolVersion;
-import com.sampong.tambo.tui.PanelIds;
-import com.sampong.tambo.tui.Ui;
-import com.sampong.tambo.tui.UiContext;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 
 /**
  * The main view: contextual detail for whatever is selected in the focused
  * sidebar panel (lazygit's right-hand pane).
  */
+@RequiredArgsConstructor
 public final class DetailPanel {
 
+    @NonNull
     private final UiContext ctx;
+    @NonNull
     private final ToolsPanel toolsPanel;
+    @NonNull
     private final TasksPanel tasksPanel;
-
-    public DetailPanel(UiContext ctx, ToolsPanel toolsPanel, TasksPanel tasksPanel) {
-        this.ctx = ctx;
-        this.toolsPanel = toolsPanel;
-        this.tasksPanel = tasksPanel;
-    }
 
     public Panel build() {
         String focus = ctx.focusedId();
@@ -54,7 +53,7 @@ public final class DetailPanel {
         }
 
         return panel("Details", column(lines.toArray(new Element[0])))
-                .rounded().borderColor(Color.DARK_GRAY);
+                .rounded().borderColor(ctx.theme().idle());
     }
 
     private void addToolDetail(List<Element> lines, ToolVersion t) {

@@ -29,33 +29,47 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
+import com.sampong.tambo.mise.CancelRegistry;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.ShellActivationService;
-import com.sampong.tambo.tui.panel.ConfigEditorModal;
-import com.sampong.tambo.tui.panel.DetailPanel;
-import com.sampong.tambo.tui.panel.EnvPanel;
-import com.sampong.tambo.tui.panel.HelpOverlay;
-import com.sampong.tambo.tui.panel.LogPanel;
-import com.sampong.tambo.tui.panel.RegistryModal;
-import com.sampong.tambo.tui.panel.StatusPanel;
-import com.sampong.tambo.tui.panel.TasksPanel;
-import com.sampong.tambo.tui.panel.ToolsPanel;
+import com.sampong.tambo.tui.components.ConfigEditorModal;
+import com.sampong.tambo.tui.components.ConfirmModal;
+import com.sampong.tambo.tui.components.DetailPanel;
+import com.sampong.tambo.tui.components.EnvPanel;
+import com.sampong.tambo.tui.components.HelpOverlay;
+import com.sampong.tambo.tui.components.LogPanel;
+import com.sampong.tambo.tui.components.RegistryModal;
+import com.sampong.tambo.tui.components.StatusPanel;
+import com.sampong.tambo.tui.components.TaskArgsModal;
+import com.sampong.tambo.tui.components.TasksPanel;
+import com.sampong.tambo.tui.components.ToolsPanel;
+import com.sampong.tambo.tui.features.MiseActions;
+import com.sampong.tambo.tui.features.TamboConfig;
+import com.sampong.tambo.tui.features.Theme;
+import com.sampong.tambo.tui.state.LogLevel;
+import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.state.UiContext;
+import com.sampong.tambo.tui.state.UiState;
+
+import org.jspecify.annotations.Nullable;
+
+import lombok.NonNull;
 
 /**
  * A lazygit-style terminal UI for <a href="https://mise.jdx.dev">mise</a>.
  * <p>
  * This class is a thin orchestrator: it owns the lifecycle, the global key
- * bindings, and the top-level layout. Everything else lives in components:
+ * bindings, and the top-level layout. Everything else lives in subpackages:
  * <ul>
- *   <li>{@link UiState} — the shared data every panel renders from</li>
- *   <li>{@link MiseActions} — background {@code mise} operations</li>
- *   <li>{@code panel/} — one class per panel: {@link StatusPanel}, {@link ToolsPanel},
+ *   <li>{@code state/} — {@link UiState}, the shared data every panel renders
+ *       from, plus the {@link UiContext} interface panels see the app through</li>
+ *   <li>{@code features/} — {@link MiseActions} and other background/feature logic</li>
+ *   <li>{@code components/} — one class per panel: {@link StatusPanel}, {@link ToolsPanel},
  *       {@link EnvPanel}, {@link TasksPanel}, {@link DetailPanel}, {@link LogPanel},
  *       plus the {@link RegistryModal} and {@link HelpOverlay} overlays</li>
  * </ul>
- * Panels reach back into the app through the narrow {@link UiContext} interface.
  */
 @Component
 public final class MiseTuiApp extends ToolkitApp implements UiContext {
@@ -78,13 +92,19 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final LogPanel logPanel;
     private final RegistryModal registryModal;
     private final ConfigEditorModal configEditor;
+    private final ConfirmModal confirmModal;
+    private final TaskArgsModal taskArgsModal;
     private final HelpOverlay helpOverlay;
 
-    public MiseTuiApp(MiseQueryService query, MiseToolService tools,
-                      MiseMaintenanceService maintenance, ShellActivationService activation,
-                      @Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
+    private final TamboConfig config;
+
+    public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
+                      @NonNull MiseMaintenanceService maintenance, @NonNull ShellActivationService activation,
+                      @NonNull CancelRegistry cancelRegistry, @NonNull TamboConfig config,
+                      @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor) {
+        this.config = config;
         this.state = new UiState();
-        this.actions = new MiseActions(query, tools, maintenance, activation,
+        this.actions = new MiseActions(query, tools, maintenance, activation, cancelRegistry,
                 executor, state, r -> runner().runOnRenderThread(r));
 
         this.statusPanel = new StatusPanel(this);
@@ -95,6 +115,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.logPanel = new LogPanel(this);
         this.registryModal = new RegistryModal(this);
         this.configEditor = new ConfigEditorModal(this);
+        this.confirmModal = new ConfirmModal(this);
+        this.taskArgsModal = new TaskArgsModal(this);
         this.helpOverlay = new HelpOverlay(this);
     }
 
@@ -111,7 +133,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     @Override
-    public String focusedId() {
+    public Theme theme() {
+        return config.theme();
+    }
+
+    @Override
+    public @Nullable String focusedId() {
         return runner() != null ? runner().focusManager().focusedId() : null;
     }
 
@@ -127,7 +154,18 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     public boolean modalOpen() {
-        return !registryModal.isOpen() && !configEditor.isOpen();
+        return !registryModal.isOpen() && !configEditor.isOpen() && !confirmModal.isOpen()
+                && !taskArgsModal.isOpen();
+    }
+
+    @Override
+    public void confirm(String message, Runnable onConfirm) {
+        confirmModal.open(message, onConfirm);
+    }
+
+    @Override
+    public void promptTaskArgs(String taskName, String initialArgs) {
+        taskArgsModal.open(taskName, initialArgs);
     }
 
     // ==================== Lifecycle ====================
@@ -140,11 +178,13 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     /**
      * Standard bindings plus j/k on moveUp/moveDown, so panels whose built-in list
      * handling does the scrolling (the command log) accept vim keys like the panels
-     * that translate them by hand in {@link Ui#applyNav}. Not the full vim set:
-     * vim bindings would also claim g/G/x, which are mise actions here.
+     * that translate them by hand in {@code Ui.applyNav}. Not the full vim set:
+     * vim bindings would also claim g/G/x, which are mise actions here. Any
+     * {@code keys.*} entries from {@link TamboConfig} are layered on last so users
+     * can remap navigation.
      */
-    private static Bindings navBindings() {
-        String overlay = "moveUp = Up, k\nmoveDown = Down, j\n";
+    private Bindings navBindings() {
+        String overlay = "moveUp = Up, k\nmoveDown = Down, j\n" + config.keyOverlay();
         try {
             return BindingSets.load(
                     new ByteArrayInputStream(overlay.getBytes(StandardCharsets.UTF_8)),
@@ -174,7 +214,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 }
                 return EventResult.HANDLED;
             }
-            if (registryModal.isOpen() || configEditor.isOpen()) {
+            if (confirmModal.isOpen()) {
+                // No focusable input of its own — the confirm dialog reads its keys here.
+                confirmModal.handleKey(key);
+                return EventResult.HANDLED;
+            }
+            if (registryModal.isOpen() || configEditor.isOpen() || taskArgsModal.isOpen()) {
                 // The modal's input box / text area is focused and consumes everything
                 // it needs; never let panel shortcuts fire underneath it.
                 return EventResult.UNHANDLED;
@@ -209,6 +254,18 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
             }
             if (key.isChar('U')) {
                 actions.selfUpdate();
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('P')) {
+                if (state.outdated().isEmpty()) {
+                    state.addLog(LogLevel.INFO, "All tools are up to date");
+                } else {
+                    confirm("Upgrade all " + state.outdated().size() + " outdated tool(s)?", actions::upgradeAll);
+                }
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('X')) {
+                confirm("Prune unused/old tool versions?", actions::prune);
                 return EventResult.HANDLED;
             }
             if (key.isChar('1')) {
@@ -259,6 +316,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         }
         if (configEditor.isOpen()) {
             return stack(body, configEditor.build());
+        }
+        if (confirmModal.isOpen()) {
+            return stack(body, confirmModal.build());
+        }
+        if (taskArgsModal.isOpen()) {
+            return stack(body, taskArgsModal.build());
         }
         return body;
     }
@@ -328,16 +391,20 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     private Element buildFooter() {
         String hints;
-        if (registryModal.isOpen()) {
+        if (confirmModal.isOpen()) {
+            hints = confirmModal.footerHint();
+        } else if (taskArgsModal.isOpen()) {
+            hints = taskArgsModal.footerHint();
+        } else if (registryModal.isOpen()) {
             hints = registryModal.footerHint();
         } else if (configEditor.isOpen()) {
             hints = configEditor.footerHint();
         } else {
             String focus = focusedId();
             hints = switch (focus) {
-                case PanelIds.TOOLS -> "↑/↓ j/k select   i install   u use in project   x uninstall   g set global";
-                case PanelIds.TASKS -> "↑/↓ j/k select   enter run task";
-                case PanelIds.ENV -> "↑/↓ j/k scroll";
+                case PanelIds.TOOLS -> "↑/↓ select   / filter   i install   u use   x uninstall   g global   p upgrade   c cancel";
+                case PanelIds.TASKS -> "↑/↓ select   / filter   enter run   : args   . re-run   c cancel";
+                case PanelIds.ENV -> "↑/↓ scroll   / filter   y copy value";
                 case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
                 case null, default -> "1-5 jump   tab cycle";
             };
@@ -345,7 +412,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         return row(
                 text(" " + hints).fg(Color.CYAN),
                 spacer(),
-                text("a add sdk   e edit config   A activate   T trust   D doctor   U update   r refresh   ? help   q quit ").dim()
+                text("a add   e edit   A activate   T trust   D doctor   U update   P upgrade-all   X prune   r refresh   ? help   q quit ").dim()
         );
     }
 }
