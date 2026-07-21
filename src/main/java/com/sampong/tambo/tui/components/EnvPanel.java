@@ -36,6 +36,8 @@ public final class EnvPanel {
     private final PanelFilter filter = new PanelFilter(PanelIds.ENV_FILTER, PanelIds.ENV);
     private int index;
     private String lastQuery = "";
+    /** Horizontal pan of the value text, in columns; 0 = no pan (←/→, h/l). */
+    private int hScroll;
 
     /** The env entries currently shown — all of them, or the fuzzy-filtered view. */
     private List<Map.Entry<String, String>> visibleItems() {
@@ -68,7 +70,9 @@ public final class EnvPanel {
             list.add(row(text(emptyText()).dim()));
         } else {
             for (Map.Entry<String, String> e : entries) {
-                list.add(row(text(e.getKey() + "=").fg(Color.YELLOW), text(Ui.truncate(e.getValue(), 60)).dim()));
+                // ←/→ pans the value: PATH-like entries are far wider than the sidebar.
+                list.add(row(text(e.getKey() + "=").fg(Color.YELLOW),
+                        text(Ui.truncate(Ui.pan(e.getValue(), hScroll), 60)).dim()));
             }
         }
 
@@ -100,6 +104,10 @@ public final class EnvPanel {
         }
         if (event.isCancel() && filter.isActive()) {
             filter.clear(ctx);
+            return EventResult.HANDLED;
+        }
+        if (Ui.isPanKey(event)) {
+            hScroll = Ui.applyHPan(event, hScroll);
             return EventResult.HANDLED;
         }
         if (event.isChar('y') && !entries.isEmpty()) {

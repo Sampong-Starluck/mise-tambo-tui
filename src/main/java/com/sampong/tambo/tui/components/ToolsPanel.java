@@ -33,11 +33,21 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public final class ToolsPanel {
 
+    /**
+     * Width of the trailing status column. Kept small: the sidebar is only 44
+     * columns, and anything wider squeezes the flexible name column into
+     * unreadability. Constant width (see {@code Ui.fixedWidth}) so a shorter
+     * frame fully overwrites a longer one while the live status streams.
+     */
+    private static final int STATUS_WIDTH = 13;
+
     @NonNull
     private final UiContext ctx;
     private final PanelFilter filter = new PanelFilter(PanelIds.TOOLS_FILTER, PanelIds.TOOLS);
     private int index;
     private String lastQuery = "";
+    /** Horizontal pan of the row text, in columns; 0 = no pan (←/→, h/l). */
+    private int hScroll;
 
     /** The tools currently shown — the full list, or the fuzzy-filtered view. */
     private List<ToolVersion> visibleItems() {
@@ -111,10 +121,15 @@ public final class ToolsPanel {
         Color statusTextColor = busy ? Color.YELLOW : latest != null ? Color.YELLOW : statusColor;
         return row(
                 text(badge + " ").fg(statusColor),
-                text(t.tool()).bold(),
-                text("@" + t.version()),
+                // One pannable string so ←/→ can reveal long names the narrow
+                // sidebar clips (e.g. java@oracle-graalvm-25.0.3).
+                text(Ui.pan(t.tool() + "@" + t.version(), hScroll)).bold(),
                 spacer(),
-                text(statusText + " ").fg(statusTextColor).dim()
+                // Leading space guarantees a gap from the name even when the row
+                // overflows and the spacer collapses to zero. Fixed width so a
+                // shorter frame fully overwrites a longer previous one while the
+                // live status streams (no ghosting).
+                text(" " + Ui.fixedWidth(statusText, STATUS_WIDTH)).fg(statusTextColor).dim()
         );
     }
 
@@ -123,7 +138,7 @@ public final class ToolsPanel {
         for (String key : new String[]{t.label(), "upgrade:" + t.tool(), "registry:" + t.tool()}) {
             String status = ctx.state().busyStatusFor(key);
             if (status != null && !status.isBlank()) {
-                return Ui.truncate(status, 22);
+                return status;
             }
         }
         return "working…";
@@ -140,6 +155,10 @@ public final class ToolsPanel {
         }
         if (event.isCancel() && filter.isActive()) {
             filter.clear(ctx);
+            return EventResult.HANDLED;
+        }
+        if (Ui.isPanKey(event)) {
+            hScroll = Ui.applyHPan(event, hScroll);
             return EventResult.HANDLED;
         }
         if (items.isEmpty()) {

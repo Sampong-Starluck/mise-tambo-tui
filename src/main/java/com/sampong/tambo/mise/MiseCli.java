@@ -92,7 +92,7 @@ public class MiseCli {
 
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                destroyTree(process);
                 return new Result(-1, "", "Timed out after " + timeout.getSeconds() + "s: mise " + String.join(" ", args));
             }
 
@@ -101,7 +101,7 @@ public class MiseCli {
             return new Result(-1, "", "Failed to run mise: " + e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            process.destroyForcibly();
+            destroyTree(process);
             return new Result(-1, "", "Interrupted while running mise " + String.join(" ", args));
         }
     }
@@ -162,7 +162,7 @@ public class MiseCli {
 
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                destroyTree(process);
                 reader.join();
                 return new Result(-1, capturedText(captured),
                         "Timed out after " + timeout.getSeconds() + "s: mise " + String.join(" ", args));
@@ -173,13 +173,25 @@ public class MiseCli {
             return new Result(-1, capturedText(captured), "Failed to run mise: " + e.getMessage());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            process.destroyForcibly();
+            destroyTree(process);
             return new Result(-1, capturedText(captured), "Interrupted while running mise " + String.join(" ", args));
         } finally {
             if (cancelKey != null) {
                 cancelRegistry.deregister(cancelKey);
             }
         }
+    }
+
+    /**
+     * Forcibly kills a process and everything it spawned. {@code mise} typically
+     * forks a shell or build tool to do the real work (e.g. {@code mise run});
+     * killing only the direct child leaves that descendant running and holding
+     * the output pipe open, which hangs the reader thread waiting for an EOF
+     * that never comes.
+     */
+    private static void destroyTree(Process process) {
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
+        process.destroyForcibly();
     }
 
     /** Strips ANSI escapes and keeps only the final state of {@code \r}-overwritten progress lines. */

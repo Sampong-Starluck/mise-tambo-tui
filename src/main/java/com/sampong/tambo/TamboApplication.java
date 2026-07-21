@@ -1,7 +1,9 @@
 package com.sampong.tambo;
 
+import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.RuntimeHintsRegistrar;
+import org.springframework.aot.hint.TypeReference;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -29,6 +31,15 @@ public class TamboApplication {
         @Override
         public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
             hints.resources().registerPattern("dev/tamboui/tui/bindings/*.properties");
+            // Spring's own AOT-generated reflection entry for this class carries a
+            // typeReached(TamboApplication) runtime condition, but this app's own
+            // package is initialized at build time under the `native` profile, so
+            // that runtime transition never fires and the conditional entry never
+            // activates ("AOT initializer ... could not be found" at native-image
+            // startup). Register it unconditionally as a belt-and-suspenders fix.
+            hints.reflection().registerType(
+                    TypeReference.of(TamboApplication.class.getName() + "__ApplicationContextInitializer"),
+                    MemberCategory.INVOKE_DECLARED_CONSTRUCTORS);
         }
     }
 

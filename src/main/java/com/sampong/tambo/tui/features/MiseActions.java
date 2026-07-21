@@ -236,6 +236,7 @@ public final class MiseActions {
                 return;
             }
         }
+        state.addLog(LogLevel.INFO, "Nothing running to cancel");
     }
 
     // ==================== Tasks ====================

@@ -50,7 +50,7 @@ public final class HelpOverlay {
                 helpLine("Up/Down, j/k", "Move selection / scroll"),
                 helpLine("/", "Filter the focused list (Tools/Env/Tasks); Esc clears"),
                 helpLine("PgUp/PgDn", "Page up/down"),
-                helpLine("Left/Right, h/l", "Pan the command log horizontally"),
+                helpLine("Left/Right, h/l", "Pan the focused panel / command log horizontally"),
                 helpLine("End", "Log: resume following the newest entry"),
                 helpLine("Mouse", "Click to focus a panel, wheel to scroll"),
                 helpLine("a", "Add SDK — fuzzy-find registry modal"),

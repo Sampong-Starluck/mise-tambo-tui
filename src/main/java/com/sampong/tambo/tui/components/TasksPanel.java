@@ -31,11 +31,21 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public final class TasksPanel {
 
+    /**
+     * Width of the trailing description/status column. Kept modest: the sidebar
+     * is only 44 columns and the task name must stay readable. Constant width
+     * (see {@code Ui.fixedWidth}) so a shorter frame fully overwrites a longer
+     * one while a running task streams its live status.
+     */
+    private static final int TRAILING_WIDTH = 20;
+
     @NonNull
     private final UiContext ctx;
     private final PanelFilter filter = new PanelFilter(PanelIds.TASKS_FILTER, PanelIds.TASKS);
     private int index;
     private String lastQuery = "";
+    /** Horizontal pan of the trailing text, in columns; 0 = no pan (←/→, h/l). */
+    private int hScroll;
 
     /** The tasks currently shown — the full list, or the fuzzy-filtered view. */
     private List<MiseTask> visibleItems() {
@@ -74,13 +84,17 @@ public final class TasksPanel {
         } else {
             for (MiseTask t : items) {
                 boolean busy = ctx.state().isBusy("task:" + t.name());
-                String trailing = busy ? busyText(t.name())
-                        : t.description() == null ? "" : Ui.truncate(t.description(), 28);
+                String trailing = busy ? busyText(t.name()) : t.description() == null ? "" : t.description();
                 list.add(row(
                         text((busy ? Ui.spinner() : "▷") + " ").fg(busy ? Color.YELLOW : Color.GREEN),
                         text(t.name()).bold(),
                         spacer(),
-                        text(trailing + " ").fg(busy ? Color.YELLOW : Color.DARK_GRAY).dim()
+                        // Leading space guarantees a gap from the name even when the
+                        // row overflows and the spacer collapses to zero. Fixed width
+                        // so a shorter frame fully overwrites a longer previous one
+                        // (no ghosting); ←/→ pans to read the rest.
+                        text(" " + Ui.fixedWidth(Ui.pan(trailing, hScroll), TRAILING_WIDTH))
+                                .fg(busy ? Color.YELLOW : Color.DARK_GRAY).dim()
                 ));
             }
         }
@@ -94,7 +108,7 @@ public final class TasksPanel {
     /** The latest streamed line for a running task, else "running…". */
     private String busyText(String taskName) {
         String status = ctx.state().busyStatusFor("task:" + taskName);
-        return status != null && !status.isBlank() ? Ui.truncate(status, 28) : "running…";
+        return status != null && !status.isBlank() ? status : "running…";
     }
 
     private String title(int total, int shown) {
@@ -122,6 +136,10 @@ public final class TasksPanel {
         }
         if (event.isCancel() && filter.isActive()) {
             filter.clear(ctx);
+            return EventResult.HANDLED;
+        }
+        if (Ui.isPanKey(event)) {
+            hScroll = Ui.applyHPan(event, hScroll);
             return EventResult.HANDLED;
         }
         if (event.isChar('.')) {

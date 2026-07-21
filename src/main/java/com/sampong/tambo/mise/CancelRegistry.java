@@ -34,7 +34,11 @@ public class CancelRegistry {
     }
 
     /**
-     * Forcibly terminates the process registered under {@code key}, if any.
+     * Forcibly terminates the process registered under {@code key}, if any —
+     * including its descendants. {@code mise run}/{@code install} typically forks a
+     * shell or build tool to do the real work; killing only the direct {@code mise}
+     * child leaves that descendant running and holding the output pipe open, which
+     * hangs the reader thread waiting for an EOF that never comes.
      *
      * @return true when a process was found and asked to stop
      */
@@ -43,6 +47,7 @@ public class CancelRegistry {
         if (process == null) {
             return false;
         }
+        process.descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroy();
         process.destroyForcibly();
         return true;
