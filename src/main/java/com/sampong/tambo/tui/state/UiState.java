@@ -51,6 +51,8 @@ public final class UiState {
     @NonNull
     private List<TrustStatus> trust = List.of();
     private boolean loading = true;
+    /** Set once at startup from {@code --offline}; gates network-requiring actions. */
+    private boolean offline = false;
 
     /** The most recently run task and its args, for the re-run shortcut. */
     @Nullable

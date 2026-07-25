@@ -5,10 +5,8 @@ import static dev.tamboui.toolkit.Toolkit.text;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
-import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyEvent;
 
-import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
 import org.jspecify.annotations.Nullable;

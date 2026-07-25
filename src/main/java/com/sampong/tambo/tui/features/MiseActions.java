@@ -133,15 +133,17 @@ public final class MiseActions {
     // ==================== Tool operations ====================
 
     public void installTool(@NonNull ToolVersion t) {
+        if (blockedOffline("installing")) {
+            return;
+        }
         String key = t.label();
         if (state.markBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise install " + key);
-        submitBackground("install " + key,
+        submitBackground("install " + key, key,
                 () -> tools.install(key, liveLogLine(key), key),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Installed " + key, "Install failed: " + key);
                     refresh();
                 });
@@ -153,17 +155,38 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise uninstall " + key);
-        submitBackground("uninstall " + key,
+        submitBackground("uninstall " + key, key,
                 () -> tools.uninstall(key),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Uninstalled " + key, "Uninstall failed: " + key);
+                    refresh();
+                });
+    }
+
+    /**
+     * Runs {@code mise unuse tool@version} — drops the entry from whichever
+     * {@code mise.toml} declares it and prunes the installed version if nothing
+     * else still references it.
+     */
+    public void removeTool(@NonNull ToolVersion t) {
+        String key = t.label();
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ mise unuse " + key);
+        submitBackground("remove " + key, key,
+                () -> tools.remove(key),
+                result -> {
+                    logResult(result, "Removed " + key + " from mise.toml", "Remove failed: " + key);
                     refresh();
                 });
     }
 
     /** Runs {@code mise use [-g] tool@version} — installs and writes the config entry. */
     public void useTool(@NonNull String toolAtVersion, boolean global) {
+        if (blockedOffline("installing")) {
+            return;
+        }
         String shortName = toolAtVersion.contains("@")
                 ? toolAtVersion.substring(0, toolAtVersion.indexOf('@'))
                 : toolAtVersion;
@@ -173,10 +196,9 @@ public final class MiseActions {
         }
         String args = global ? "mise use -g " + toolAtVersion : "mise use " + toolAtVersion;
         state.addLog(LogLevel.CMD, "$ " + args);
-        submitBackground(args,
+        submitBackground(args, key,
                 () -> tools.use(toolAtVersion, global, liveLogLine(key), key),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result,
                             global ? "Set " + toolAtVersion + " as global default"
                                     : "Applied " + toolAtVersion + " to ./mise.toml",
@@ -187,15 +209,17 @@ public final class MiseActions {
 
     /** Runs {@code mise upgrade <tool>} for a single tool, then refreshes. */
     public void upgradeTool(@NonNull ToolVersion t) {
+        if (blockedOffline("upgrading")) {
+            return;
+        }
         String key = "upgrade:" + t.tool();
         if (state.markBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise upgrade " + t.tool());
-        submitBackground("upgrade " + t.tool(),
+        submitBackground("upgrade " + t.tool(), key,
                 () -> tools.upgrade(t.tool(), liveLogLine(key), key),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Upgraded " + t.tool(), "Upgrade failed: " + t.tool());
                     refresh();
                 });
@@ -203,15 +227,17 @@ public final class MiseActions {
 
     /** Runs {@code mise upgrade} for every outdated tool, then refreshes. */
     public void upgradeAll() {
+        if (blockedOffline("upgrading")) {
+            return;
+        }
         String key = "upgrade:*";
         if (state.markBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise upgrade");
-        submitBackground("upgrade all",
+        submitBackground("upgrade all", key,
                 () -> tools.upgrade("", liveLogLine(key), key),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Upgraded all outdated tools", "Upgrade failed");
                     refresh();
                 });
@@ -256,12 +282,9 @@ public final class MiseActions {
         state.lastTaskArgs(args);
         String display = args.isBlank() ? taskName : taskName + " -- " + args;
         state.addLog(LogLevel.CMD, "$ mise run " + display);
-        submitBackground("run " + taskName,
+        submitBackground("run " + taskName, key,
                 () -> tools.runTask(taskName, args, liveLogLine(key), key),
-                result -> {
-                    state.clearBusy(key);
-                    logResult(result, "Task \"" + taskName + "\" finished", "Task \"" + taskName + "\" failed");
-                });
+                result -> logResult(result, "Task \"" + taskName + "\" finished", "Task \"" + taskName + "\" failed"));
     }
 
     /** Re-runs the last task (with its previous args); logs a hint when nothing has run yet. */
@@ -283,10 +306,9 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise activate — writing the activation line to your shell profile");
-        submitBackground("activate",
+        submitBackground("activate", key,
                 activation::activateInShell,
                 outcome -> {
-                    state.clearBusy(key);
                     LogLevel level = !outcome.ok() ? LogLevel.ERROR : outcome.changed() ? LogLevel.OK : LogLevel.INFO;
                     state.addLog(level, outcome.message());
                     refresh();
@@ -300,10 +322,9 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise trust");
-        submitBackground("trust",
+        submitBackground("trust", key,
                 maintenance::trust,
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Config trusted — mise will now load this project's mise.toml",
                             "mise trust failed");
                     refresh();
@@ -319,12 +340,9 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise doctor");
-        submitBackground("doctor",
-                () -> maintenance.doctor(liveLogLine()),
-                result -> {
-                    state.clearBusy(key);
-                    logResult(result, "mise doctor: no problems found", "mise doctor found problems");
-                });
+        submitBackground("doctor", key,
+                () -> maintenance.doctor(liveLogLine(key)),
+                result -> logResult(result, "mise doctor: no problems found", "mise doctor found problems"));
     }
 
     /** Runs {@code mise prune}, streaming progress, to reclaim disk from old versions. */
@@ -334,10 +352,9 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise prune");
-        submitBackground("prune",
-                () -> maintenance.prune(liveLogLine()),
+        submitBackground("prune", key,
+                () -> maintenance.prune(liveLogLine(key)),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "Pruned unused tool versions", "Prune failed");
                     refresh();
                 });
@@ -345,15 +362,17 @@ public final class MiseActions {
 
     /** Runs {@code mise self-update}, streaming progress into the command log. */
     public void selfUpdate() {
+        if (blockedOffline("self-update")) {
+            return;
+        }
         String key = "self-update";
         if (state.markBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ mise self-update");
-        submitBackground("self-update",
-                () -> maintenance.selfUpdate(liveLogLine()),
+        submitBackground("self-update", key,
+                () -> maintenance.selfUpdate(liveLogLine(key)),
                 result -> {
-                    state.clearBusy(key);
                     logResult(result, "mise is up to date", "Self-update failed");
                     refresh();
                 });
@@ -368,7 +387,7 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.CMD, "Saving " + file + "…");
-        submitBackground("save " + file,
+        submitBackground("save " + file, key,
                 () -> {
                     try {
                         if (file.getParent() != null) {
@@ -381,7 +400,6 @@ public final class MiseActions {
                     }
                 },
                 error -> {
-                    state.clearBusy(key);
                     if (error.isEmpty()) {
                         state.addLog(LogLevel.OK, "Saved " + file);
                         refresh();
@@ -433,29 +451,40 @@ public final class MiseActions {
 
     /**
      * A line consumer for streaming commands: marshals every non-blank output line
-     * onto the render thread and appends it to the command log as it arrives.
-     */
-    private Consumer<String> liveLogLine() {
-        return line -> {
-            if (!line.isBlank()) {
-                uiThread.accept(() -> state.addLog(LogLevel.INFO, line));
-            }
-        };
-    }
-
-    /**
-     * Like {@link #liveLogLine()} but also records the line as the live status of
-     * the operation under {@code busyKey}, so its panel row can show progress.
+     * onto the render thread and appends it to the command log as it arrives,
+     * prefixed with a short source tag so concurrently running operations stay
+     * distinguishable in the shared log. Also records the (untagged) line as the
+     * live status of the operation under {@code busyKey}, so its panel row can
+     * show progress.
      */
     private Consumer<String> liveLogLine(String busyKey) {
+        String tag = "[" + sourceLabel(busyKey) + "] ";
         return line -> {
             if (!line.isBlank()) {
                 uiThread.accept(() -> {
-                    state.addLog(LogLevel.INFO, line);
+                    state.addLog(LogLevel.INFO, tag + line);
                     state.busyStatus(busyKey, line);
                 });
             }
         };
+    }
+
+    /** Derives a short, human-readable source tag from an operation's busy key. */
+    private static String sourceLabel(String busyKey) {
+        if (busyKey.startsWith("task:")) {
+            return busyKey.substring("task:".length());
+        }
+        if (busyKey.startsWith("registry:")) {
+            return busyKey.substring("registry:".length());
+        }
+        if (busyKey.startsWith("upgrade:")) {
+            String tool = busyKey.substring("upgrade:".length());
+            return tool.equals("*") ? "upgrade" : "upgrade " + tool;
+        }
+        if (busyKey.startsWith("save:")) {
+            return "save";
+        }
+        return busyKey;
     }
 
     private <T> void submitBackground(String label, Supplier<T> work, Consumer<T> onDone) {
@@ -469,6 +498,45 @@ public final class MiseActions {
             }
             uiThread.accept(() -> onDone.accept(result));
         });
+    }
+
+    /**
+     * Like {@link #submitBackground(String, Supplier, Consumer)} but also clears
+     * {@code busyKey} before invoking the callback — including on the exception
+     * path, which the plain overload leaves marked busy forever since nothing
+     * else would clear it. Every action that calls {@link UiState#markBusy} up
+     * front must release it through this overload.
+     */
+    private <T> void submitBackground(String label, String busyKey, Supplier<T> work, Consumer<T> onDone) {
+        executor.execute(() -> {
+            T result;
+            try {
+                result = work.get();
+            } catch (RuntimeException e) {
+                uiThread.accept(() -> {
+                    state.clearBusy(busyKey);
+                    state.addLog(LogLevel.ERROR, label + " failed: " + e.getMessage());
+                });
+                return;
+            }
+            uiThread.accept(() -> {
+                state.clearBusy(busyKey);
+                onDone.accept(result);
+            });
+        });
+    }
+
+    /**
+     * Logs a message and returns {@code true} when the app was launched with
+     * {@code --offline} and {@code what} needs the network — the caller should
+     * bail out without marking anything busy or touching the CLI.
+     */
+    private boolean blockedOffline(String what) {
+        if (query.offline()) {
+            state.addLog(LogLevel.INFO, "Offline mode — " + what + " needs network access");
+            return true;
+        }
+        return false;
     }
 
     private void logResult(MiseCli.Result result, String okMessage, String failMessagePrefix) {

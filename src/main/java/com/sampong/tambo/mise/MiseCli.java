@@ -9,11 +9,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
@@ -34,17 +37,35 @@ public class MiseCli {
 
     private static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(20);
 
+    /**
+     * How long to wait for buffered output to drain once the tracked process has
+     * already exited. A task command can hand off to a detached background daemon
+     * (e.g. {@code mvnd}, which keeps a JVM warm across builds) that inherits our
+     * end of the output pipe and holds it open indefinitely by design. Without a
+     * cap, waiting for that pipe to see EOF would block forever even though the
+     * command we launched has already finished.
+     */
+    private static final Duration READER_DRAIN_GRACE = Duration.ofSeconds(2);
+
     /** ANSI escape sequences (colors, cursor movement) that mise may emit even when piped. */
     private static final Pattern ANSI = Pattern.compile("\\x1B\\[[;\\d]*[ -/]*[@-~]");
 
     private final AsyncTaskExecutor executor;
     private final CancelRegistry cancelRegistry;
+    /** Set by {@code --offline} on the command line; see {@link #offline()}. */
+    private final boolean offline;
 
     /** Reads stdout/stderr on the same virtual-thread executor the rest of the app uses. */
     public MiseCli(@Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
-                   @NonNull CancelRegistry cancelRegistry) {
+                   @NonNull CancelRegistry cancelRegistry, @NonNull ApplicationArguments arguments) {
         this.executor = executor;
         this.cancelRegistry = cancelRegistry;
+        this.offline = arguments.containsOption("offline");
+    }
+
+    /** True when the app was launched with {@code --offline}: no mise command here may touch the network. */
+    public boolean offline() {
+        return offline;
     }
 
     /** The result of running a {@code mise} subcommand. */
@@ -77,7 +98,7 @@ public class MiseCli {
 
         Process process;
         try {
-            process = new ProcessBuilder(command).start();
+            process = newProcessBuilder(command).start();
         } catch (IOException e) {
             return new Result(-1, "", "Failed to launch mise: " + e.getMessage());
         }
@@ -96,7 +117,7 @@ public class MiseCli {
                 return new Result(-1, "", "Timed out after " + timeout.getSeconds() + "s: mise " + String.join(" ", args));
             }
 
-            return new Result(process.exitValue(), stdoutFuture.join(), stderrFuture.join());
+            return new Result(process.exitValue(), drain(stdoutFuture), drain(stderrFuture));
         } catch (IOException e) {
             return new Result(-1, "", "Failed to run mise: " + e.getMessage());
         } catch (InterruptedException e) {
@@ -131,7 +152,7 @@ public class MiseCli {
 
         Process process;
         try {
-            process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            process = newProcessBuilder(command).redirectErrorStream(true).start();
         } catch (IOException e) {
             return new Result(-1, "", "Failed to launch mise: " + e.getMessage());
         }
@@ -163,11 +184,11 @@ public class MiseCli {
             boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
             if (!finished) {
                 destroyTree(process);
-                reader.join();
+                drainReader(reader);
                 return new Result(-1, capturedText(captured),
                         "Timed out after " + timeout.getSeconds() + "s: mise " + String.join(" ", args));
             }
-            reader.join();
+            drainReader(reader);
             return new Result(process.exitValue(), capturedText(captured), "");
         } catch (IOException e) {
             return new Result(-1, capturedText(captured), "Failed to run mise: " + e.getMessage());
@@ -182,6 +203,15 @@ public class MiseCli {
         }
     }
 
+    /** Builds the process for a {@code mise} invocation, forcing offline mode when {@code --offline} is set. */
+    private ProcessBuilder newProcessBuilder(List<String> command) {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        if (offline) {
+            builder.environment().put("MISE_OFFLINE", "1");
+        }
+        return builder;
+    }
+
     /**
      * Forcibly kills a process and everything it spawned. {@code mise} typically
      * forks a shell or build tool to do the real work (e.g. {@code mise run});
@@ -192,6 +222,46 @@ public class MiseCli {
     private static void destroyTree(Process process) {
         process.descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroyForcibly();
+    }
+
+    /**
+     * Waits briefly for the streaming reader to finish once the tracked process
+     * has already exited, rather than joining it unboundedly. If a detached
+     * daemon is still holding the pipe open, the reader thread is left running
+     * in the background (a cheap virtual thread) instead of hanging the caller.
+     */
+    private static void drainReader(CompletableFuture<Void> reader) {
+        try {
+            reader.get(READER_DRAIN_GRACE.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            log.debug("Output reader still active after process exit "
+                    + "(likely a detached daemon holding the pipe open); proceeding without it");
+        } catch (ExecutionException e) {
+            log.debug("Output reader failed: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Like {@link #drainReader} but for the non-streaming {@link #run} path: waits
+     * briefly for the captured stream to finish, falling back to empty output
+     * rather than blocking forever on a pipe a detached daemon still holds open.
+     */
+    private static String drain(CompletableFuture<String> future) {
+        try {
+            return future.get(READER_DRAIN_GRACE.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            log.debug("Output stream still open after process exit "
+                    + "(likely a detached daemon holding the pipe open); returning partial output");
+            return "";
+        } catch (ExecutionException e) {
+            log.debug("Output stream failed: {}", e.getMessage());
+            return "";
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "";
+        }
     }
 
     /** Strips ANSI escapes and keeps only the final state of {@code \r}-overwritten progress lines. */

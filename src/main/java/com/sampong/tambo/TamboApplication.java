@@ -1,5 +1,6 @@
 package com.sampong.tambo;
 
+import org.jspecify.annotations.Nullable;
 import org.springframework.aot.hint.MemberCategory;
 import org.springframework.aot.hint.RuntimeHints;
 import org.springframework.aot.hint.RuntimeHintsRegistrar;
@@ -29,7 +30,7 @@ public class TamboApplication {
      */
     static class TamboUiResourceHints implements RuntimeHintsRegistrar {
         @Override
-        public void registerHints(RuntimeHints hints, ClassLoader classLoader) {
+        public void registerHints(RuntimeHints hints, @Nullable ClassLoader classLoader) {
             hints.resources().registerPattern("dev/tamboui/tui/bindings/*.properties");
             // Spring's own AOT-generated reflection entry for this class carries a
             // typeReached(TamboApplication) runtime condition, but this app's own
@@ -43,13 +44,13 @@ public class TamboApplication {
         }
     }
 
-    public static void main(String[] args) {
+    static void main(String[] args) {
         System.exit(SpringApplication.exit(SpringApplication.run(TamboApplication.class, args)));
     }
 
     /**
      * Jackson mapper for parsing {@code mise ... -J} output. Backs off automatically
-     * if Spring Boot's Jackson auto-configuration already provides one.
+     * if Spring Boot's Jackson autoconfiguration already provides one.
      */
     @Bean
     @ConditionalOnMissingBean

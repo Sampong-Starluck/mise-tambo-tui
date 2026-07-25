@@ -29,7 +29,7 @@ import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
-/** Panel 2 — installed/configured tool versions with install/uninstall/global actions. */
+/** Panel 2 — installed/configured tool versions with install/uninstall/remove/global actions. */
 @RequiredArgsConstructor
 public final class ToolsPanel {
 
@@ -177,6 +177,12 @@ public final class ToolsPanel {
         if (event.isChar('x') || event.code() == KeyCode.DELETE) {
             if (t.installed()) {
                 ctx.confirm("Uninstall " + t.label() + "?", () -> ctx.actions().uninstallTool(t));
+            }
+            return EventResult.HANDLED;
+        }
+        if (event.isChar('R')) {
+            if (t.sourcePath() != null) {
+                ctx.confirm("Remove " + t.label() + " from mise.toml?", () -> ctx.actions().removeTool(t));
             }
             return EventResult.HANDLED;
         }

@@ -10,6 +10,7 @@ import static dev.tamboui.toolkit.Toolkit.stack;
 import static dev.tamboui.toolkit.Toolkit.text;
 
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
@@ -74,7 +75,7 @@ import lombok.NonNull;
 @Component
 public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
-    private static final int SIDEBAR_WIDTH = 44;
+    private static final int SIDEBAR_WIDTH = 56;
     /** Below this terminal height the sidebar collapses unfocused panels to their title bar. */
     private static final int ACCORDION_HEIGHT = 28;
     /** A collapsed panel: just the top border with the title, plus the bottom border. */
@@ -101,9 +102,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
                       @NonNull MiseMaintenanceService maintenance, @NonNull ShellActivationService activation,
                       @NonNull CancelRegistry cancelRegistry, @NonNull TamboConfig config,
-                      @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor) {
+                      @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
+                      @NonNull ApplicationArguments arguments) {
         this.config = config;
         this.state = new UiState();
+        this.state.offline(arguments.containsOption("offline"));
         this.actions = new MiseActions(query, tools, maintenance, activation, cancelRegistry,
                 executor, state, r -> runner().runOnRenderThread(r));
 
@@ -229,7 +232,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('a')) {
-                registryModal.open();
+                if (state.offline()) {
+                    state.addLog(LogLevel.INFO, "Offline mode — Add SDK needs network access");
+                } else {
+                    registryModal.open();
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('A')) {
@@ -257,7 +264,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('P')) {
-                if (state.outdated().isEmpty()) {
+                if (state.offline()) {
+                    state.addLog(LogLevel.INFO, "Offline mode — can't check for outdated tools");
+                } else if (state.outdated().isEmpty()) {
                     state.addLog(LogLevel.INFO, "All tools are up to date");
                 } else {
                     confirm("Upgrade all " + state.outdated().size() + " outdated tool(s)?", actions::upgradeAll);

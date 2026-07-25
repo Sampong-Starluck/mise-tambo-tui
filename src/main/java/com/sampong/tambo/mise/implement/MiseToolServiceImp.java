@@ -37,6 +37,11 @@ public class MiseToolServiceImp implements MiseToolService {
     }
 
     @Override
+    public MiseCli.Result remove(@NonNull String toolAtVersion) {
+        return cli.run(List.of("unuse", toolAtVersion), Duration.ofMinutes(2));
+    }
+
+    @Override
     public MiseCli.Result upgrade(@NonNull String tool, @NonNull Consumer<String> onLine,
                                   @NonNull String cancelKey) {
         List<String> args = new ArrayList<>();

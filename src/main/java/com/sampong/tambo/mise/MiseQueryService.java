@@ -18,11 +18,20 @@ import com.sampong.tambo.mise.model.TrustStatus;
  */
 public interface MiseQueryService {
 
+    /** True when the app was launched with {@code --offline}: no query here may touch the network. */
+    boolean offline();
+
+    /**
+     * Installed/configured tool versions via {@code mise ls -J}. In offline mode,
+     * excludes configured-but-not-yet-installed entries — nothing offline can
+     * install them anyway.
+     */
     List<ToolVersion> listTools();
 
     /**
      * Tools with a newer version available, via {@code mise outdated -J}. Empty
-     * when everything is current or the command is unavailable.
+     * when everything is current, the command is unavailable, or the app is
+     * offline (checking for updates needs the network).
      */
     List<OutdatedTool> listOutdated();
 

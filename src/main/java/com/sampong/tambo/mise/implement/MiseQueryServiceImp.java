@@ -51,6 +51,11 @@ public class MiseQueryServiceImp implements MiseQueryService {
     private final ObjectMapper mapper;
 
     @Override
+    public boolean offline() {
+        return cli.offline();
+    }
+
+    @Override
     public List<ToolVersion> listTools() {
         MiseCli.Result result = cli.run(List.of("ls", "-J"));
         if (!result.ok() || result.stdout().isBlank()) {
@@ -70,6 +75,9 @@ public class MiseQueryServiceImp implements MiseQueryService {
                     continue;
                 }
                 for (RawVersion v : versions) {
+                    if (cli.offline() && !v.installed) {
+                        continue;
+                    }
                     tools.add(new ToolVersion(
                             entry.getKey(),
                             v.version != null ? v.version : "unknown",
@@ -91,6 +99,9 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public List<OutdatedTool> listOutdated() {
+        if (cli.offline()) {
+            return List.of();
+        }
         MiseCli.Result result = cli.run(List.of("outdated", "-J"), Duration.ofSeconds(30));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();

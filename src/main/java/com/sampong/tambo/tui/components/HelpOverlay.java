@@ -64,6 +64,7 @@ public final class HelpOverlay {
                 helpLine("i", "Install selected tool"),
                 helpLine("u", "Apply selected tool to project mise.toml"),
                 helpLine("x", "Uninstall selected tool (asks to confirm)"),
+                helpLine("R", "Remove selected tool from mise.toml (asks to confirm)"),
                 helpLine("g", "Install/set as global default"),
                 helpLine("p", "Upgrade selected tool to the newest version"),
                 helpLine("P", "Upgrade all outdated tools (asks to confirm)"),
@@ -81,6 +82,9 @@ public final class HelpOverlay {
                 text(""),
                 text("Config: ~/.config/tambo/tambo.properties (theme.* colours,").dim(),
                 text("keys.* nav overrides). $TAMBO_CONFIG_DIR overrides the path.").dim(),
+                text(""),
+                text("--offline at launch: shows only installed tools, blocks").dim(),
+                text("install/use/upgrade/self-update/Add SDK (need the network).").dim(),
                 text(""),
                 text("Press ? or Esc to close").dim()
         ).rounded().borderColor(Color.CYAN).width(64);

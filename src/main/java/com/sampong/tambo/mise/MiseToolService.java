@@ -15,6 +15,13 @@ public interface MiseToolService {
     MiseCli.Result uninstall(String toolAtVersion);
 
     /**
+     * Runs {@code mise unuse tool[@version]}: removes the entry from whichever
+     * config file declares it (project {@code mise.toml} or global) and, unless
+     * another config still references it, prunes the installed version too.
+     */
+    MiseCli.Result remove(String toolAtVersion);
+
+    /**
      * Runs {@code mise upgrade <tool>} to install and switch to the newest version
      * allowed by the config. Pass a bare tool name to upgrade just that tool, or an
      * empty string to upgrade every outdated tool. Streams output line-by-line.
