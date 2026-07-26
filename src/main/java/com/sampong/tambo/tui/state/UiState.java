@@ -35,24 +35,35 @@ public final class UiState {
 
     private static final int MAX_LOG = 300;
 
-    @NonNull
-    private List<ToolVersion> tools = List.of();
+    // Every dataset is a Lazy: it carries its own load state, so each panel can
+    // tell "not fetched yet" from "fetched and genuinely empty" without a shared
+    // loading flag that is only ever right for whichever call finished last.
+    // See MiseActions for which tier loads eagerly and which loads on first read.
+    @Getter(AccessLevel.NONE)
+    private final Lazy<List<ToolVersion>> tools = new Lazy<>(List.of());
     /** Tool short-name → newer version available, from {@code mise outdated}. */
-    @NonNull
-    private Map<String, String> outdated = Map.of();
-    @NonNull
-    private List<MiseTask> tasks = List.of();
-    @NonNull
-    private List<RegistryEntry> registry = List.of();
-    @NonNull
-    private Map<String, String> env = Map.of();
-    @NonNull
-    private DoctorInfo doctor = DoctorInfo.unknown();
-    @NonNull
-    private List<TrustStatus> trust = List.of();
-    private boolean loading = true;
+    @Getter(AccessLevel.NONE)
+    private final Lazy<Map<String, String>> outdated = new Lazy<>(Map.of());
+    @Getter(AccessLevel.NONE)
+    private final Lazy<List<MiseTask>> tasks = new Lazy<>(List.of());
+    @Getter(AccessLevel.NONE)
+    private final Lazy<List<RegistryEntry>> registry = new Lazy<>(List.of());
+    @Getter(AccessLevel.NONE)
+    private final Lazy<Map<String, String>> env = new Lazy<>(Map.of());
+    @Getter(AccessLevel.NONE)
+    private final Lazy<DoctorInfo> doctor = new Lazy<>(DoctorInfo.unknown());
+    @Getter(AccessLevel.NONE)
+    private final Lazy<List<TrustStatus>> trust = new Lazy<>(List.of());
     /** Set once at startup from {@code --offline}; gates network-requiring actions. */
     private boolean offline = false;
+    /**
+     * Set when {@code mise self-update} reports that the feature was compiled
+     * out — the case for every package-manager build, since the binary is owned
+     * by the package database and must not overwrite itself. Learned from the
+     * first attempt rather than probed at startup, and from then on the U key
+     * explains instead of running and drops out of the footer and help.
+     */
+    private boolean selfUpdateDisabled = false;
 
     /** The most recently run task and its args, for the re-run shortcut. */
     @Nullable
@@ -80,9 +91,74 @@ public final class UiState {
 
     // ==================== Data ====================
 
-    /** True when no config directory reported by {@code mise trust --show} is untrusted. */
+    // Each dataset is exposed twice: the plain accessor for panels that just want
+    // to render the value, and the Lazy holder for those that also need its load
+    // state (to show a placeholder) or that trigger the fetch.
+
+    public List<ToolVersion> tools() {
+        return tools.value();
+    }
+
+    public Lazy<List<ToolVersion>> toolsLazy() {
+        return tools;
+    }
+
+    public Map<String, String> outdated() {
+        return outdated.value();
+    }
+
+    public Lazy<Map<String, String>> outdatedLazy() {
+        return outdated;
+    }
+
+    public List<MiseTask> tasks() {
+        return tasks.value();
+    }
+
+    public Lazy<List<MiseTask>> tasksLazy() {
+        return tasks;
+    }
+
+    public List<RegistryEntry> registry() {
+        return registry.value();
+    }
+
+    public Lazy<List<RegistryEntry>> registryLazy() {
+        return registry;
+    }
+
+    public Map<String, String> env() {
+        return env.value();
+    }
+
+    public Lazy<Map<String, String>> envLazy() {
+        return env;
+    }
+
+    public DoctorInfo doctor() {
+        return doctor.value();
+    }
+
+    public Lazy<DoctorInfo> doctorLazy() {
+        return doctor;
+    }
+
+    public List<TrustStatus> trust() {
+        return trust.value();
+    }
+
+    public Lazy<List<TrustStatus>> trustLazy() {
+        return trust;
+    }
+
+    /**
+     * True when no config directory reported by {@code mise trust --show} is
+     * untrusted. Only meaningful once {@link #trustLazy()} has loaded — an empty
+     * list vacuously satisfies "all trusted", so callers must check
+     * {@link Lazy#everLoaded()} before rendering this as a verdict.
+     */
     public boolean allTrusted() {
-        return trust.stream().allMatch(TrustStatus::trusted);
+        return trust.value().stream().allMatch(TrustStatus::trusted);
     }
 
     // ==================== Busy tracking ====================

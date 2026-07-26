@@ -273,6 +273,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 }
                 return EventResult.HANDLED;
             }
+            if (key.isChar('C')) {
+                // Panel-local 'c' only cancels what the cursor is on; this always
+                // stops everything, however the user has moved around since.
+                actions.cancelAll();
+                return EventResult.HANDLED;
+            }
             if (key.isChar('X')) {
                 confirm("Prune unused/old tool versions?", actions::prune);
                 return EventResult.HANDLED;
@@ -387,6 +393,17 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     private Element buildHeader() {
+        // Both fields here come from `mise doctor`, which loads lazily; until it
+        // answers the header stays neutral rather than announcing "not activated".
+        actions.ensureDoctor();
+        if (!state.doctorLazy().everLoaded()) {
+            return row(
+                    text(" tambo ").bold().cyan(),
+                    text("— a TUI for mise").dim(),
+                    spacer(),
+                    text("checking mise…").dim()
+            );
+        }
         Color statusColor = state.doctor().activated() ? Color.GREEN : Color.YELLOW;
         String statusText = state.doctor().activated() ? "activated" : "not activated";
         return row(
@@ -411,8 +428,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         } else {
             String focus = focusedId();
             hints = switch (focus) {
-                case PanelIds.TOOLS -> "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   g global   p upgrade   c cancel";
-                case PanelIds.TASKS -> "↑/↓ select   / filter   ←/→ pan   enter run   : args   . re-run   c cancel";
+                case PanelIds.TOOLS -> "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   g global   p upgrade   c cancel   C all";
+                case PanelIds.TASKS -> "↑/↓ select   / filter   ←/→ pan   enter run   : args   . re-run   c cancel   C all";
                 case PanelIds.ENV -> "↑/↓ scroll   / filter   ←/→ pan   y copy value";
                 case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
                 case null, default -> "1-5 jump   tab cycle";
@@ -421,7 +438,18 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         return row(
                 text(" " + hints).fg(Color.CYAN),
                 spacer(),
-                text("a add   e edit   A activate   T trust   D doctor   U update   P upgrade-all   X prune   r refresh   ? help   q quit ").dim()
+                text(globalKeyHints()).dim()
         );
+    }
+
+    /**
+     * The always-available keys. "U update" drops out once mise has told us its
+     * self-update was compiled out, so the footer stops advertising an action
+     * that cannot succeed on this install.
+     */
+    private String globalKeyHints() {
+        String update = state.selfUpdateDisabled() ? "" : "U update   ";
+        return "a add   e edit   A activate   T trust   D doctor   " + update
+                + "P upgrade-all   X prune   r refresh   ? help   q quit ";
     }
 }

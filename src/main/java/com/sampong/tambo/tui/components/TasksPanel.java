@@ -38,6 +38,12 @@ public final class TasksPanel {
      * one while a running task streams its live status.
      */
     private static final int TRAILING_WIDTH = 20;
+    /**
+     * Shown beside a running task instead of its latest output line. Streaming the
+     * build's own log here duplicated the command log, and a wide, fast-changing
+     * line made the whole row jitter — this panel only needs to say "still going".
+     */
+    private static final String RUNNING_TEXT = "running…";
 
     @NonNull
     private final UiContext ctx;
@@ -84,7 +90,7 @@ public final class TasksPanel {
         } else {
             for (MiseTask t : items) {
                 boolean busy = ctx.state().isBusy("task:" + t.name());
-                String trailing = busy ? busyText(t.name()) : t.description() == null ? "" : t.description();
+                String trailing = busy ? RUNNING_TEXT : t.description() == null ? "" : t.description();
                 list.add(row(
                         text((busy ? Ui.spinner() : "▷") + " ").fg(busy ? Color.YELLOW : Color.GREEN),
                         text(t.name()).bold(),
@@ -105,12 +111,6 @@ public final class TasksPanel {
         return column(list.constraint(fill()));
     }
 
-    /** The latest streamed line for a running task, else "running…". */
-    private String busyText(String taskName) {
-        String status = ctx.state().busyStatusFor("task:" + taskName);
-        return status != null && !status.isBlank() ? status : "running…";
-    }
-
     private String title(int total, int shown) {
         if (total == 0) {
             return "4 Tasks";
@@ -122,7 +122,9 @@ public final class TasksPanel {
         if (filter.isActive()) {
             return "No tasks match \"" + filter.query() + "\"";
         }
-        return ctx.state().loading() ? "Loading…" : "No tasks defined in this project";
+        return ctx.state().tasksLazy().everLoaded()
+                ? "No tasks defined in this project"
+                : "Loading…";
     }
 
     private EventResult handleKey(KeyEvent event, List<MiseTask> items) {

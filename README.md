@@ -31,9 +31,17 @@ This TUI application is a Spring Boot CLI application built with [TamboUI](https
 
 ## Prerequisites
 
+### To run the JAR
+
 - Java 25+
-- Maven 3.6+
 - `mise` installed and available on your `PATH`
+
+### To build the native image
+
+- GraalVM JDK 25+ (or a compatible polyglot runtime)
+- Maven 3.6+
+- `mise` (recommended) or the tools above activated in your shell
+- Linux, macOS, or Windows with appropriate build tools
 
 ## Quick start
 
@@ -44,6 +52,64 @@ This TUI application is a Spring Boot CLI application built with [TamboUI](https
 ```
 
 This produces an executable JAR in `target/tambo-0.0.1.jar`.
+
+### Build a native image
+
+#### Linux
+
+To build a self-contained native image on Linux, use the deploy script:
+
+```bash
+./deploy-tambo.sh
+```
+
+This compiles a GraalVM native image and installs it to `~/.local/bin/mise-tambo`, then prints instructions for running it. The script:
+
+- checks for `./mvnw` and a GraalVM JDK
+- runs Maven with the `native` profile to build the image
+- validates the binary is complete before installing
+- handles atomic install (so you can upgrade while a binary is running)
+- detects leftover files from older install layouts
+
+**Build options:**
+
+- `./deploy-tambo.sh --clean` — wipe `target/` first, slower but safer after dependency changes
+- `./deploy-tambo.sh --mise TASK` — build by running a `mise.toml` task instead of invoking `./mvnw` directly (see below)
+- `./deploy-tambo.sh --no-mise` — force use of `./mvnw` even if `mise.toml` is present
+- `PREFIX=/usr/local ./deploy-tambo.sh` — install to a custom prefix (default: `~/.local`)
+
+**Using mise to build:**
+
+When `mise.toml` is present and you're on an interactive terminal, the script asks whether to build through `mise` or use the java on your PATH:
+
+```
+This project pins its toolchain in mise.toml.
+Build through mise, or with the java on your PATH? [M/j]
+```
+
+Choosing mise (the default) runs a task from `mise.toml` instead of calling `./mvnw` directly. This ensures you get the exact pinned versions (Java, Maven) without needing to activate them in your shell first. If a task isn't specified, it defaults to `compile-native`. Pass `--mise TASK` or `--no-mise` to skip the prompt in CI/unattended builds.
+
+#### macOS and Windows
+
+On macOS and Windows, build the native image manually:
+
+```bash
+./mvnw clean package -Pnative
+```
+
+The compiled binary will be in `target/`. Copy it to your preferred location and make it executable:
+
+```bash
+# macOS / Windows PowerShell
+cp target/tambo-0.0.1 ~/.local/bin/mise-tambo
+chmod +x ~/.local/bin/mise-tambo
+```
+
+If `mise.toml` is present in your project, you can run a build task instead:
+
+```bash
+mise run compile-native
+```
 
 ### Run from source
 
@@ -61,6 +127,8 @@ java -jar target/tambo-0.0.1.jar
 
 The UI is designed to be keyboard-first.
 
+### Global
+
 - `?` — open help overlay
 - `a` — open the registry modal
 - `A` — activate `mise` shell integration
@@ -68,9 +136,51 @@ The UI is designed to be keyboard-first.
 - `E` — edit the global `mise` config
 - `D` — run `mise doctor`
 - `U` — self-update the `mise` backend
+- `P` — upgrade all outdated tools
+- `X` — prune unused/old tool versions
 - `r` — refresh the current UI state
-- `1` / `2` / `3` / `4` — jump to status, tools, env, and tasks panels
+- `1` / `2` / `3` / `4` / `5` — jump to status, tools, env, tasks, and log panels
 - `j` / `k`, arrow keys, `Home`, `End`, `Page Up`, `Page Down` — navigate lists
+
+### Tools panel
+
+- `i` — install the selected tool version
+- `u` — use (install and set) the selected tool version
+- `x` — uninstall the selected tool
+- `g` — toggle global installation
+- `p` — upgrade the selected tool
+- `c` — cancel the selected tool's operation
+- `C` — cancel all running operations
+
+### Tasks panel
+
+- `Enter` — run the selected task
+- `:` — run the selected task with arguments
+- `.` — re-run the last task
+- `c` — cancel the selected task
+- `C` — cancel all running operations
+
+## Runtime behavior
+
+### Task execution
+
+- When you run a task, its output streams live to the **Command Log** panel (5)
+- The **Tasks** panel (4) shows the task with a spinner and `running…` indicator, then returns to its description when done
+- All streamed output is captured and available in the log, even if you switch panels
+
+### Cancellation
+
+- `c` on the **Tools** or **Tasks** panel cancels the selected item's operation
+- If you move the cursor or switch panels after starting a task, `c` still cancels the only running operation (no need to move back)
+- `C` from any panel cancels **all** running operations at once — useful when multiple builds are in flight
+- Cancelled operations exit immediately and clean up their processes, including descendants (background jobs spawned by the task)
+
+### Environment and diagnostics
+
+- The **Status** panel shows `mise` health and configuration
+- The **Env** panel displays environment variables and shell activation context
+- The **Detail** panel provides additional information for the current selection
+- Use `D` to run `mise doctor` if something seems wrong
 
 ## Project structure
 
@@ -117,6 +227,12 @@ src/main/java/com/sampong/tambo/
 - Spring Boot manages application wiring and startup.
 - An `AsyncTaskExecutor` is configured for virtual-thread-backed background work.
 - The app uses lazy initialization and a virtual-thread-enabled Spring configuration for efficient startup and background task handling.
+
+### Build profiles
+
+- **default** — produces an executable JAR (`./mvnw package`)
+- **native** — produces a GraalVM native image (used by `./deploy-tambo.sh`), faster startup with no JVM overhead
+- **pgo** — uses profile-guided optimization on top of the native profile for additional runtime performance
 
 ## Configuration
 

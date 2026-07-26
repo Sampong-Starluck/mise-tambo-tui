@@ -61,6 +61,10 @@ public final class ToolsPanel {
     }
 
     public Column build() {
+        // `mise outdated` feeds nothing but the "↑ version" marker on a row, and
+        // it is the slowest call in the app (network). Pulling it in from here
+        // lets the list paint from `mise ls` alone and gain the markers later.
+        ctx.actions().ensureOutdated();
         int total = ctx.state().tools().size();
         List<ToolVersion> items = visibleItems();
 
@@ -106,7 +110,9 @@ public final class ToolsPanel {
         if (filter.isActive()) {
             return "No tools match \"" + filter.query() + "\"";
         }
-        return ctx.state().loading() ? "Loading…" : "No tools installed — press a to add one";
+        return ctx.state().toolsLazy().everLoaded()
+                ? "No tools installed — press a to add one"
+                : "Loading…";
     }
 
     private Row toolRow(ToolVersion t) {

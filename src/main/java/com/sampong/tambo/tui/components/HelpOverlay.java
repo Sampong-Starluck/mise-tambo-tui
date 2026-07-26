@@ -59,7 +59,9 @@ public final class HelpOverlay {
                 helpLine("A", "Activate mise in your shell profile (PowerShell, bash, zsh, fish)"),
                 helpLine("T", "Trust this project's mise config (mise trust)"),
                 helpLine("D", "Run mise doctor — full report in the log"),
-                helpLine("U", "mise self-update"),
+                helpLine("U", ctx.state().selfUpdateDisabled()
+                        ? "mise self-update — unavailable, update mise via your package manager"
+                        : "mise self-update"),
                 helpLine("X", "Prune unused/old tool versions (asks to confirm)"),
                 helpLine("i", "Install selected tool"),
                 helpLine("u", "Apply selected tool to project mise.toml"),
@@ -71,7 +73,8 @@ public final class HelpOverlay {
                 helpLine("Enter", "Run selected task"),
                 helpLine(":", "Run selected task with arguments"),
                 helpLine(".", "Re-run the last task"),
-                helpLine("c", "Cancel the selected tool/task's running operation"),
+                helpLine("c", "Cancel the selected tool/task (or the only one running)"),
+                helpLine("C", "Cancel every running operation, from any panel"),
                 helpLine("y", "Env panel: copy the selected variable's value"),
                 helpLine("r", "Refresh"),
                 helpLine("q", "Quit"),

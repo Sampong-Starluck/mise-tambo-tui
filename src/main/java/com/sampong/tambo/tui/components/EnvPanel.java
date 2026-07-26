@@ -90,7 +90,9 @@ public final class EnvPanel {
         if (filter.isActive()) {
             return "No env vars match \"" + filter.query() + "\"";
         }
-        return ctx.state().loading() ? "Loading…" : "No environment variables active";
+        return ctx.state().envLazy().everLoaded()
+                ? "No environment variables active"
+                : "Loading…";
     }
 
     private EventResult handleKey(KeyEvent event, List<Map.Entry<String, String>> entries) {

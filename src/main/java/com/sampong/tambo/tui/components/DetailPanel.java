@@ -81,8 +81,11 @@ public final class DetailPanel {
     }
 
     private void addWelcome(List<Element> lines) {
+        ctx.actions().ensureDoctor();
         lines.add(text("tambo").bold().cyan());
-        lines.add(text("mise " + ctx.state().doctor().version()).dim());
+        lines.add(text(ctx.state().doctorLazy().everLoaded()
+                ? "mise " + ctx.state().doctor().version()
+                : "checking mise…").dim());
         lines.add(text(""));
         lines.add(text("Select a panel (1-4 or Tab) to see details.").dim());
         lines.add(text("Press a to fuzzy-find and install an SDK from the registry.").dim());

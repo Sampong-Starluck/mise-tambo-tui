@@ -1,6 +1,8 @@
 package com.sampong.tambo.mise;
 
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.stereotype.Component;
@@ -31,6 +33,30 @@ public class CancelRegistry {
     /** True when an operation under {@code key} is currently cancellable. */
     public boolean isRunning(@NonNull String key) {
         return running.containsKey(key);
+    }
+
+    /**
+     * Keys of every operation currently cancellable, in no particular order.
+     * Lets the UI cancel what is actually running rather than only what the
+     * cursor happens to be sitting on.
+     */
+    public Set<String> runningKeys() {
+        return Set.copyOf(running.keySet());
+    }
+
+    /**
+     * Cancels every registered operation.
+     *
+     * @return the keys that were cancelled
+     */
+    public Set<String> cancelAll() {
+        Set<String> cancelled = new HashSet<>();
+        for (String key : running.keySet()) {
+            if (cancel(key)) {
+                cancelled.add(key);
+            }
+        }
+        return cancelled;
     }
 
     /**

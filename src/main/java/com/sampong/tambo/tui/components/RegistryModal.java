@@ -20,6 +20,7 @@ import dev.tamboui.widgets.input.TextInputState;
 
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.tui.features.Fuzzy;
+import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
@@ -62,6 +63,13 @@ public final class RegistryModal {
     }
 
     public void open() {
+        // The registry is ~200 KB of JSON that only this modal reads, so it is
+        // fetched here on first open rather than at startup — a session that
+        // never adds an SDK never pays for it at all. Reopening after a failed
+        // fetch is the user asking to try again; a loaded registry is reused,
+        // since nothing done locally changes what mise can install.
+        ctx.state().registryLazy().retryIfFailed();
+        ctx.actions().ensureRegistry();
         preOpenFocus = ctx.focusedId();
         open = true;
         step = Step.TOOL;
@@ -122,7 +130,10 @@ public final class RegistryModal {
         content.add(searchInputRow("Search SDK", "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
         if (ctx.state().registry().isEmpty()) {
-            content.add(text(ctx.state().loading() ? "Loading registry…" : "Registry unavailable").dim());
+            Lazy<List<RegistryEntry>> registry = ctx.state().registryLazy();
+            content.add(text(registry.everLoaded() || registry.failed()
+                    ? "Registry unavailable"
+                    : "Loading registry…").dim());
         } else if (matches.isEmpty()) {
             content.add(text("No SDK matches \"" + query + "\"").dim());
         } else {

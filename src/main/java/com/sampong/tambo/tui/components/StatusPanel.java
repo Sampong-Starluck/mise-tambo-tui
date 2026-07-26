@@ -14,6 +14,8 @@ import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
+import org.jspecify.annotations.Nullable;
+
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -25,27 +27,52 @@ public final class StatusPanel {
     private final UiContext ctx;
 
     public Panel build() {
+        // `mise doctor` is the slow half of this panel, so it is fetched on first
+        // render rather than at startup. Until it answers every row below reports
+        // "checking…": DoctorInfo.unknown() would otherwise render as a confident
+        // "not activated — press A", nagging the user to fix a working setup.
+        ctx.actions().ensureDoctor();
+        boolean doctorKnown = ctx.state().doctorLazy().everLoaded();
         DoctorInfo doctor = ctx.state().doctor();
-        boolean trusted = ctx.state().allTrusted();
+        boolean trustKnown = ctx.state().trustLazy().everLoaded();
 
         List<Element> rows = new ArrayList<>();
-        rows.add(row(text("mise    ").dim(), text(doctor.version()).bold()));
+        rows.add(row(text("mise    ").dim(),
+                doctorKnown ? text(doctor.version()).bold() : pending()));
         if (ctx.state().offline()) {
             rows.add(row(text("mode    ").dim(), text("OFFLINE").yellow().bold()));
         }
-        rows.add(doctor.activated()
-                ? row(text("active  ").dim(), Ui.badge(true))
-                : row(text("active  ").dim(), Ui.badge(false), text("  press A to activate").yellow()));
-        rows.add(trusted
-                ? row(text("trust   ").dim(), Ui.badge(true))
-                : row(text("trust   ").dim(), Ui.badge(false), text("  press T to trust").yellow()));
-        rows.add(row(text("shims   ").dim(), Ui.badge(doctor.shimsOnPath())));
-        rows.add(row(text("configs ").dim(), text(String.valueOf(doctor.configFileCount()))));
+        rows.add(badgeRow("active  ", doctorKnown, doctor.activated(), "  press A to activate"));
+        rows.add(badgeRow("trust   ", trustKnown, ctx.state().allTrusted(), "  press T to trust"));
+        rows.add(badgeRow("shims   ", doctorKnown, doctor.shimsOnPath(), null));
+        rows.add(row(text("configs ").dim(),
+                doctorKnown ? text(String.valueOf(doctor.configFileCount())) : pending()));
 
         return panel("1 Status", rows.toArray(new Element[0]))
                 .id(PanelIds.STATUS).focusable(ctx.modalOpen())
                 .rounded()
                 .borderColor(ctx.theme().idle())
                 .focusedBorderColor(ctx.theme().focus());
+    }
+
+    /**
+     * A yes/no row that withholds its verdict until the probe behind it has
+     * answered, so a value still being fetched never renders as a warning.
+     * {@code hint} is the nudge shown next to a "no" badge, or null for none.
+     */
+    private static Element badgeRow(String label, boolean known, boolean value, @Nullable String hint) {
+        if (!known) {
+            return row(text(label).dim(), pending());
+        }
+        if (value) {
+            return row(text(label).dim(), Ui.badge(true));
+        }
+        return hint == null
+                ? row(text(label).dim(), Ui.badge(false))
+                : row(text(label).dim(), Ui.badge(false), text(hint).yellow());
+    }
+
+    private static Element pending() {
+        return text("checking…").dim();
     }
 }

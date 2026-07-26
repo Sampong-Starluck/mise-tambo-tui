@@ -6,9 +6,10 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.springframework.core.task.AsyncTaskExecutor;
 
@@ -18,14 +19,14 @@ import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.ShellActivationService;
-import com.sampong.tambo.mise.model.DoctorInfo;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.OutdatedTool;
-import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
-import com.sampong.tambo.mise.model.TrustStatus;
+import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
+
+import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -38,12 +39,6 @@ import lombok.RequiredArgsConstructor;
  */
 @RequiredArgsConstructor
 public final class MiseActions {
-
-    /** Everything the dynamic panels render from, fetched in one background pass. */
-    private record Snapshot(List<ToolVersion> tools, List<OutdatedTool> outdated,
-                            List<MiseTask> tasks, Map<String, String> env, DoctorInfo doctor,
-                            List<TrustStatus> trust) {
-    }
 
     @NonNull
     private final MiseQueryService query;
@@ -65,58 +60,104 @@ public final class MiseActions {
 
     // ==================== Loading / refresh ====================
 
+    /**
+     * Starts the P0 tier before the first frame is composed. Nothing else is
+     * fetched here: {@link #ensureDoctor()}, {@link #ensureOutdated()} and
+     * {@link #ensureRegistry()} pull in the slower tiers when a panel that
+     * actually needs them first renders.
+     */
     public void loadInitial() {
-        submitBackground("initial load",
-                () -> {
-                    // Forked before takeSnapshot() blocks on its own futures, so all six
-                    // independent `mise` invocations run concurrently on virtual threads.
-                    CompletableFuture<List<RegistryEntry>> registryFuture = supplyAsync(query::listRegistry);
-                    Snapshot snapshot = takeSnapshot();
-                    return Map.entry(registryFuture.join(), snapshot);
-                },
-                loaded -> {
-                    state.registry(loaded.getKey());
-                    applySnapshot(loaded.getValue());
-                    state.loading(false);
-                    state.addLog(LogLevel.OK, "Loaded " + state.tools().size() + " tools, "
-                            + state.tasks().size() + " tasks, " + state.registry().size() + " registry entries");
-                });
+        loadEssentials();
     }
 
+    /**
+     * Re-reads P0 and marks the derived views stale so whichever panel is on
+     * screen reloads them in the background. The registry is deliberately left
+     * alone — it lists what mise <em>can</em> install, which no local install,
+     * uninstall or trust change affects.
+     */
     public void refresh() {
         state.addLog(LogLevel.INFO, "Refreshing…");
-        submitBackground("refresh",
-                this::takeSnapshot,
-                snapshot -> {
-                    applySnapshot(snapshot);
-                    state.addLog(LogLevel.OK, "Refreshed " + state.tools().size() + " tools, "
-                            + state.tasks().size() + " tasks");
+        state.toolsLazy().invalidate();
+        state.tasksLazy().invalidate();
+        state.envLazy().invalidate();
+        state.trustLazy().invalidate();
+        state.doctorLazy().invalidate();
+        state.outdatedLazy().invalidate();
+        loadEssentials();
+    }
+
+    /**
+     * P0 — the four ~10 ms calls behind everything the user reads and acts on
+     * straight away. Each publishes into {@link UiState} on its own instead of
+     * through a joined snapshot, so no single call can hold up the rest.
+     */
+    private void loadEssentials() {
+        loadLazy(state.toolsLazy(), "tools", query::listTools,
+                loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tools"));
+        loadLazy(state.tasksLazy(), "tasks", query::listTasks,
+                loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tasks"));
+        loadLazy(state.envLazy(), "env", query::listEnv, null);
+        loadLazy(state.trustLazy(), "trust", query::trustStatus, null);
+    }
+
+    // ==================== Lazy tiers ====================
+
+    /**
+     * P1 — {@code mise doctor} (~290 ms). Fills the header and Status panel:
+     * on screen from the first frame, but nothing the user acts on in that
+     * first moment, so it loads on first render rather than delaying the frame.
+     */
+    public void ensureDoctor() {
+        loadLazy(state.doctorLazy(), "doctor", query::doctorSummary, null);
+    }
+
+    /**
+     * P2 — {@code mise outdated} (~1.2 s cold, network). Only decorates tool
+     * rows with "↑ version"; every row renders correctly without it, so it is
+     * pulled in behind the already-visible list.
+     */
+    public void ensureOutdated() {
+        loadLazy(state.outdatedLazy(), "outdated", () -> toOutdatedMap(query.listOutdated()), null);
+    }
+
+    /**
+     * P3 — {@code mise registry} (~200 KB of JSON). Read by nothing but the
+     * Add-SDK modal, so it is never fetched unless the user opens it.
+     */
+    public void ensureRegistry() {
+        loadLazy(state.registryLazy(), "registry", query::listRegistry, null);
+    }
+
+    /**
+     * Runs {@code work} on the executor and publishes it into {@code lazy}, but
+     * only if the holder actually wants a load — safe to call from a render
+     * method that runs every frame. On failure the claim is released so the
+     * next frame retries rather than leaving the panel stuck on its placeholder.
+     */
+    private <T> void loadLazy(Lazy<T> lazy, String label, Supplier<T> work, @Nullable Consumer<T> onLoaded) {
+        int token = lazy.claim();
+        if (token == Lazy.NO_LOAD) {
+            return;
+        }
+        executor.execute(() -> {
+            T result;
+            try {
+                result = work.get();
+            } catch (RuntimeException e) {
+                uiThread.accept(() -> {
+                    lazy.fail(token);
+                    state.addLog(LogLevel.ERROR, label + " failed: " + e.getMessage());
                 });
-    }
-
-    /** Fetches all independent `mise` calls concurrently on virtual threads. */
-    private Snapshot takeSnapshot() {
-        CompletableFuture<List<ToolVersion>> tools = supplyAsync(query::listTools);
-        CompletableFuture<List<OutdatedTool>> outdated = supplyAsync(query::listOutdated);
-        CompletableFuture<List<MiseTask>> tasks = supplyAsync(query::listTasks);
-        CompletableFuture<Map<String, String>> env = supplyAsync(query::listEnv);
-        CompletableFuture<DoctorInfo> doctor = supplyAsync(query::doctorSummary);
-        CompletableFuture<List<TrustStatus>> trust = supplyAsync(query::trustStatus);
-        return new Snapshot(tools.join(), outdated.join(), tasks.join(), env.join(),
-                doctor.join(), trust.join());
-    }
-
-    private <T> CompletableFuture<T> supplyAsync(Supplier<T> work) {
-        return CompletableFuture.supplyAsync(work, executor);
-    }
-
-    private void applySnapshot(Snapshot snapshot) {
-        state.tools(snapshot.tools());
-        state.outdated(toOutdatedMap(snapshot.outdated()));
-        state.tasks(snapshot.tasks());
-        state.env(snapshot.env());
-        state.doctor(snapshot.doctor());
-        state.trust(snapshot.trust());
+                return;
+            }
+            uiThread.accept(() -> {
+                lazy.publish(token, result);
+                if (onLoaded != null) {
+                    onLoaded.accept(result);
+                }
+            });
+        });
     }
 
     /** Flattens the outdated list into a tool → latest-version lookup, ignoring entries without a target. */
@@ -255,6 +296,16 @@ public final class MiseActions {
         cancelFirst("Cancelled task " + taskName, "task:" + taskName);
     }
 
+    /**
+     * Cancels the first of {@code keys} that is running. Failing that, falls back to
+     * the single operation that <em>is</em> running, if there is exactly one: 'c' is
+     * bound per-panel and cancels whatever the cursor sits on, so moving the
+     * selection off a running task — or switching panels to watch its output — used
+     * to report "nothing running" while the build carried on in the background.
+     * <p>
+     * The fallback stays off when several operations are in flight, since there is
+     * no way to guess which one was meant; {@link #cancelAll()} handles that case.
+     */
     private void cancelFirst(String message, String... keys) {
         for (String key : keys) {
             if (cancelRegistry.cancel(key)) {
@@ -262,7 +313,36 @@ public final class MiseActions {
                 return;
             }
         }
-        state.addLog(LogLevel.INFO, "Nothing running to cancel");
+
+        Set<String> live = cancelRegistry.runningKeys();
+        if (live.isEmpty()) {
+            state.addLog(LogLevel.INFO, "Nothing running to cancel");
+            return;
+        }
+        if (live.size() > 1) {
+            state.addLog(LogLevel.INFO, live.size() + " operations running ("
+                    + live.stream().map(MiseActions::sourceLabel).sorted().collect(Collectors.joining(", "))
+                    + ") — press C to cancel all");
+            return;
+        }
+
+        String only = live.iterator().next();
+        if (cancelRegistry.cancel(only)) {
+            state.addLog(LogLevel.INFO, "Cancelled " + sourceLabel(only));
+        } else {
+            state.addLog(LogLevel.INFO, "Nothing running to cancel");
+        }
+    }
+
+    /** Kills every in-flight operation, whatever panel or selection is active. */
+    public void cancelAll() {
+        Set<String> cancelled = cancelRegistry.cancelAll();
+        if (cancelled.isEmpty()) {
+            state.addLog(LogLevel.INFO, "Nothing running to cancel");
+            return;
+        }
+        state.addLog(LogLevel.INFO, "Cancelled "
+                + cancelled.stream().map(MiseActions::sourceLabel).sorted().collect(Collectors.joining(", ")));
     }
 
     // ==================== Tasks ====================
@@ -360,8 +440,27 @@ public final class MiseActions {
                 });
     }
 
+    /**
+     * The substring mise prints when its self-update was compiled out. Matched
+     * rather than parsed: mise offers no exit code or flag distinguishing this
+     * from an ordinary update failure.
+     */
+    private static final String SELF_UPDATE_DISABLED_MARKER = "disabled at build time";
+
+    /** Explains why self-update can never work here, in place of mise's raw error. */
+    private static final String SELF_UPDATE_DISABLED_MESSAGE =
+            "mise's self-update is disabled in this build — it was installed by a package manager, "
+                    + "so update it from there";
+
     /** Runs {@code mise self-update}, streaming progress into the command log. */
     public void selfUpdate() {
+        // Once mise has told us the feature is compiled out, that answer holds
+        // for the life of this binary: explain instead of spawning a process
+        // that is guaranteed to fail.
+        if (state.selfUpdateDisabled()) {
+            state.addLog(LogLevel.INFO, SELF_UPDATE_DISABLED_MESSAGE);
+            return;
+        }
         if (blockedOffline("self-update")) {
             return;
         }
@@ -373,9 +472,22 @@ public final class MiseActions {
         submitBackground("self-update", key,
                 () -> maintenance.selfUpdate(liveLogLine(key)),
                 result -> {
+                    if (!result.ok() && mentionsDisabledSelfUpdate(result)) {
+                        state.selfUpdateDisabled(true);
+                        state.addLog(LogLevel.INFO, SELF_UPDATE_DISABLED_MESSAGE);
+                        return; // nothing changed, so nothing to refresh
+                    }
                     logResult(result, "mise is up to date", "Self-update failed");
                     refresh();
                 });
+    }
+
+    /** True when a failed self-update was refused outright rather than merely erroring. */
+    private static boolean mentionsDisabledSelfUpdate(MiseCli.Result result) {
+        // self-update streams with stderr merged into stdout, but check both so
+        // this keeps working if that ever changes.
+        return (result.stdout() + result.stderr()).toLowerCase()
+                .contains(SELF_UPDATE_DISABLED_MARKER);
     }
 
     // ==================== Config files ====================
