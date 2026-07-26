@@ -185,21 +185,39 @@ The UI is designed to be keyboard-first.
 ## Project structure
 
 ```text
-src/main/java/com/sampong/tambo/
-├── TamboApplication.java
-├── mise/
-│   ├── MiseCli.java
-│   ├── MiseMaintenanceService.java
-│   ├── MiseQueryService.java
-│   ├── MiseToolService.java
-│   ├── ShellActivationService.java
-│   └── model/
-└── tui/
-    ├── MiseTuiApp.java
-    ├── UiContext.java
-    ├── UiState.java
-    ├── MiseActions.java
-    └── panel/
+.
+├── deploy-tambo.sh                          (Linux-only native image builder)
+├── pom.xml
+├── README.md
+└── src/main/java/com/sampong/tambo/
+    ├── TamboApplication.java
+    ├── mise/
+    │   ├── CancelRegistry.java              (tracks and cancels running operations)
+    │   ├── MiseCli.java
+    │   ├── MiseMaintenanceService.java
+    │   ├── MiseQueryService.java
+    │   ├── MiseToolService.java
+    │   ├── ShellActivationService.java
+    │   └── model/
+    └── tui/
+        ├── MiseTuiApp.java                  (top-level TUI, key bindings, layout)
+        ├── UiContext.java                   (shared context for panels)
+        ├── UiState.java                     (reactive state for tools, tasks, logs)
+        ├── MiseActions.java                 (operations: run, cancel, install, upgrade)
+        ├── components/
+        │   ├── StatusPanel.java             (mise status and health)
+        │   ├── ToolsPanel.java              (tool browser, version selector)
+        │   ├── EnvPanel.java                (environment variables, shell activation)
+        │   ├── TasksPanel.java              (task runner with running… indicator)
+        │   ├── DetailPanel.java             (detailed info for current selection)
+        │   ├── CommandLogPanel.java         (streaming operation output)
+        │   ├── HelpOverlay.java             (? — keyboard reference)
+        │   ├── RegistryModal.java           (add SDK fuzzy-find modal)
+        │   ├── ConfigEditorModal.java       (in-app mise.toml / config.toml editor)
+        │   └── Ui.java                      (common UI utilities)
+        └── state/
+            ├── PanelIds.java                (panel identifiers)
+            └── UiContext.java
 ```
 
 ## Architecture notes
