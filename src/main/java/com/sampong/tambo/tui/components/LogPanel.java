@@ -6,6 +6,8 @@ import static dev.tamboui.toolkit.Toolkit.text;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.elements.ListElement;
@@ -18,6 +20,8 @@ import dev.tamboui.widgets.common.ScrollBarPolicy;
 import com.sampong.tambo.tui.state.LogEntry;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -122,10 +126,58 @@ public final class LogPanel {
     private Row logRow(LogEntry e, int offset) {
         String line = offset < e.text().length() ? e.text().substring(offset) : "";
         return switch (e.level()) {
-            case CMD -> row(text(line).fg(Color.GRAY));
-            case INFO -> row(text(line).dim());
-            case OK -> row(text(line).fg(Color.GREEN));
-            case ERROR -> row(text(line).fg(Color.RED));
+            case CMD -> row(text(line).fg(Color.CYAN).bold());
+            case INFO -> infoRow(line);
+            case OK -> row(text(line).fg(Color.GREEN).bold());
+            case ERROR -> row(text(line).fg(Color.RED).bold());
         };
+    }
+
+    /** Prefix {@code liveLogLine} tags every streamed subprocess line with, e.g. {@code "[compile] "}. */
+    private static final Pattern SOURCE_TAG = Pattern.compile("^\\[[^]]+] ");
+
+    /**
+     * Streamed subprocess output (mvn, npm, cargo, gradle, …) arrives tagged but
+     * otherwise as plain INFO text — any colour the subprocess itself applied is
+     * long gone by the time it's captured line-by-line. Recover some of it by
+     * recognising the conventions those tools use for their own errors/warnings/
+     * success so the log still highlights what matters, the way running them
+     * directly in a terminal would.
+     */
+    private Row infoRow(String line) {
+        Matcher m = SOURCE_TAG.matcher(line);
+        String tag = "";
+        String body = line;
+        if (m.find()) {
+            tag = m.group();
+            body = line.substring(m.end());
+        }
+        Color highlight = classify(body);
+        return tag.isEmpty()
+                ? row(highlight != null ? text(body).fg(highlight) : text(body).dim())
+                : row(text(tag).dim(), highlight != null ? text(body).fg(highlight) : text(body).dim());
+    }
+
+    /** Picks a highlight colour from build-tool-style markers in a streamed line, or none for plain output. */
+    private static @Nullable Color classify(String body) {
+        if (containsAny(body, "[ERROR]", "[FATAL]", "BUILD FAILURE", "BUILD FAILED", "npm ERR!", "error:")) {
+            return Color.RED;
+        }
+        if (containsAny(body, "[WARN]", "[WARNING]", "npm WARN", "warning:")) {
+            return Color.YELLOW;
+        }
+        if (containsAny(body, "BUILD SUCCESS", "BUILD SUCCESSFUL", "Build succeeded")) {
+            return Color.GREEN;
+        }
+        return null;
+    }
+
+    private static boolean containsAny(String s, String... needles) {
+        for (String needle : needles) {
+            if (s.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

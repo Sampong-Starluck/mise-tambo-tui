@@ -1,5 +1,6 @@
 package com.sampong.tambo.tui.components;
 
+import static dev.tamboui.toolkit.Toolkit.row;
 import static dev.tamboui.toolkit.Toolkit.text;
 
 import dev.tamboui.style.Color;
@@ -86,6 +87,11 @@ public final class Ui {
     /** Renders a boolean as a colored yes/no badge. */
     public static Element badge(boolean value) {
         return value ? text("yes").fg(Color.GREEN) : text("no").fg(Color.DARK_GRAY);
+    }
+
+    /** A single "[key] label" fragment, key bolded/yellow — matches {@code HelpOverlay}'s hint style. */
+    public static Element keyHint(String key, String label) {
+        return row(text("[").dim(), text(key).bold().yellow(), text("] " + label).dim());
     }
 
     private static final String[] SPINNER_FRAMES =

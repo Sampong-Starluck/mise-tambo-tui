@@ -8,8 +8,10 @@ import static dev.tamboui.toolkit.Toolkit.text;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.elements.Panel;
+import dev.tamboui.toolkit.elements.TextElement;
 
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.ToolVersion;
@@ -47,7 +49,7 @@ public final class DetailPanel {
         } else if (PanelIds.ENV.equals(focus)) {
             lines.add(text("Environment variables mise would export in this directory.").bold());
             lines.add(text(""));
-            lines.add(row(text("Variables ").dim(), text(String.valueOf(ctx.state().env().size()))));
+            lines.add(row(text("Variables ").dim(), text(String.valueOf(ctx.state().env().size())).bold().cyan()));
         } else {
             addWelcome(lines);
         }
@@ -57,15 +59,27 @@ public final class DetailPanel {
     }
 
     private void addToolDetail(List<Element> lines, ToolVersion t) {
+        Color statusColor = t.active() ? Color.CYAN : t.installed() ? Color.GREEN : Color.DARK_GRAY;
+        boolean pendingChange = t.requestedVersion() != null && !t.requestedVersion().isBlank()
+                && !t.requestedVersion().equals(t.version());
+        TextElement requested = text(Ui.nullToDash(t.requestedVersion()));
+        if (pendingChange) {
+            requested = requested.bold().yellow();
+        }
+
         lines.add(row(text("Tool         ").dim(), text(t.tool()).bold().cyan()));
-        lines.add(row(text("Version      ").dim(), text(t.version())));
-        lines.add(row(text("Requested    ").dim(), text(Ui.nullToDash(t.requestedVersion()))));
+        lines.add(row(text("Version      ").dim(), text(t.version()).fg(statusColor)));
+        lines.add(row(text("Requested    ").dim(), requested));
         lines.add(row(text("Installed    ").dim(), Ui.badge(t.installed())));
         lines.add(row(text("Active       ").dim(), Ui.badge(t.active())));
         lines.add(row(text("Source       ").dim(), text(Ui.nullToDash(t.sourceType())).dim()));
         lines.add(row(text("Install path ").dim(), text(Ui.nullToDash(t.installPath())).dim()));
         lines.add(text(""));
-        lines.add(text("[i] install   [u] use in project (mise.toml)   [x] uninstall   [g] set global").dim());
+        lines.add(row(
+                Ui.keyHint("i", "install"), text("   "),
+                Ui.keyHint("u", "use in project (mise.toml)"), text("   "),
+                Ui.keyHint("x", "uninstall"), text("   "),
+                Ui.keyHint("g", "set global")));
     }
 
     private void addTaskDetail(List<Element> lines, MiseTask t) {
@@ -75,20 +89,22 @@ public final class DetailPanel {
         lines.add(row(text("Aliases     ").dim(), text(t.aliasSummary())));
         lines.add(row(text("Depends on  ").dim(), text(t.dependsSummary())));
         lines.add(text(""));
-        lines.add(row(text("Run         ").dim(), text(t.runSummary())));
+        lines.add(row(text("Run         ").dim(), text(t.runSummary()).fg(Color.CYAN)));
         lines.add(text(""));
-        lines.add(text("[Enter] run task").dim());
+        lines.add(Ui.keyHint("Enter", "run task"));
     }
 
     private void addWelcome(List<Element> lines) {
         ctx.actions().ensureDoctor();
         lines.add(text("tambo").bold().cyan());
-        lines.add(text(ctx.state().doctorLazy().everLoaded()
-                ? "mise " + ctx.state().doctor().version()
-                : "checking mise…").dim());
+        lines.add(ctx.state().doctorLazy().everLoaded()
+                ? text("mise " + ctx.state().doctor().version()).fg(Color.GREEN)
+                : text("checking mise…").dim());
         lines.add(text(""));
-        lines.add(text("Select a panel (1-4 or Tab) to see details.").dim());
-        lines.add(text("Press a to fuzzy-find and install an SDK from the registry.").dim());
-        lines.add(text("Press ? for the full key reference.").dim());
+        lines.add(row(text("Select a panel (").dim(), text("1-4").bold().yellow(),
+                text(" or ").dim(), text("Tab").bold().yellow(), text(") to see details.").dim()));
+        lines.add(row(text("Press ").dim(), text("a").bold().yellow(),
+                text(" to fuzzy-find and install an SDK from the registry.").dim()));
+        lines.add(row(text("Press ").dim(), text("?").bold().yellow(), text(" for the full key reference.").dim()));
     }
 }
