@@ -9,3 +9,11 @@ run = "mvn compile"
 [tasks.compile-native]
 description = "Maven task for compile project to native image"
 run = "mvn -Pnative clean native:compile"
+
+[tasks.compile-native-instrument]
+description = "Maven task for compile project to native image"
+run = "mvn -Pnative,pgo-instrument clean native:compile"
+
+[tasks.compile-native-optimize]
+description = "Maven task for compile project to native image"
+run = "mvn -Pnative,pgo-optimize clean native:compile"
