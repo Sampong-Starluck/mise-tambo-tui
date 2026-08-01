@@ -56,7 +56,7 @@ public final class HelpOverlay {
                 helpLine("a", "Add SDK — fuzzy-find registry modal"),
                 helpLine("e", "Edit project mise.toml in-app (Ctrl+S save, Esc discard)"),
                 helpLine("E", "Edit global mise config.toml in-app"),
-                helpLine("A", "Activate mise in your shell profile (PowerShell, bash, zsh, fish)"),
+                helpLine("A", "Activate mise in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"),
                 helpLine("T", "Trust this project's mise config (mise trust)"),
                 helpLine("D", "Run mise doctor — full report in the log"),
                 helpLine("U", ctx.state().selfUpdateDisabled()
