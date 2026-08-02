@@ -1,4 +1,4 @@
-# a TUI for mise and vfox
+# A TUI for mise and vfox
 
 A lazygit-style terminal UI for polyglot runtime version managers. It gives you a keyboard-driven, multi-panel workspace for inspecting tools, managing versions, running tasks, and editing configuration without manually composing long CLI commands.
 
@@ -28,13 +28,14 @@ This TUI application is a Spring Boot CLI application built with [TamboUI](https
 - `TasksPanel` — discovers and runs project-defined tasks (mise only)
 - `DetailPanel` — shows detailed information for the current selection
 - `LogPanel` — captures operation output and severity levels
+- `AdvancedPanel` — a `[advanced]`-key cheatsheet in the left sidebar, shown only while `V` / `--advanced-features` is on
 
 In vfox mode, only the **Tools** and **Log** panels are shown — vfox has no task runner, env inspection, doctor, trust, or prune equivalent.
 
 ### Extra UI flows
 
-- `RegistryModal` — the `a` "Add SDK" flow: fuzzy-find a tool then a version. For mise this browses the full `mise registry`; for vfox it lists only plugins you've already added and installs a version of one (it doesn't pin/use it — that stays a separate step)
-- `AddPluginModal` — vfox only (`P`): registers a plugin standalone via `vfox add`, without installing a version, supporting `--alias`/`--source`
+- `RegistryModal` — the `a` "Add SDK" flow: fuzzy-find a tool then a version. Both backends browse the full catalog (`mise registry` or `vfox available`) — for vfox, picking an unregistered plugin re-runs `vfox add` automatically before installing, so nothing needs to be added via `P` first. vfox's Enter only installs a version (it doesn't pin/use it — that stays a separate step)
+- `AddPluginModal` — vfox only (`P`): fuzzy-finds and registers a plugin standalone via `vfox add`, without installing a version; the raw `--alias`/`--source` syntax is `[advanced]`
 - `ConfigEditorModal` — in-app editor for the project config (`mise.toml` / `.vfox.toml`) and, for mise, the global `config.toml`
 - `TaskArgsModal` — mise only: run the selected task with extra arguments
 - `ConfirmModal` — confirmation prompts for destructive actions (uninstall, prune, upgrade-all, …)
@@ -65,6 +66,7 @@ tambo picks a backend once at startup and uses it for the whole session:
 Other flags:
 
 - `--offline` — skips anything that needs the network (install, use, self-update, Add SDK); shows only already-installed tools.
+- `--advanced-features` — starts the session with the [Advanced features](#advanced-features) panel already unlocked, same as pressing `V`.
 
 ## Quick start
 
@@ -160,12 +162,13 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `a` — mise: fuzzy-find and install an SDK from the full registry. vfox: install another version of an already-added plugin
 - `A` — activate shell integration for the active backend
 - `e` — edit the project config (`mise.toml` / `.vfox.toml`)
-- `E` — edit the global `mise` config (mise only)
-- `T` — trust this project's mise config (mise only)
-- `D` — run `mise doctor` (mise only)
-- `U` — self-update: `mise self-update` or `vfox upgrade`
-- `P` — mise: upgrade all outdated tools (asks to confirm). vfox: add a plugin (`vfox add`, no version install)
-- `X` — prune unused/old tool versions (mise only)
+- `V` — toggle the **Advanced** panel and unlock the `[advanced]` keys below (see [Advanced features](#advanced-features))
+- `E` *[advanced]* — edit the global `mise` config (mise only)
+- `T` *[advanced]* — trust this project's mise config (mise only)
+- `D` *[advanced]* — run `mise doctor` (mise only)
+- `U` *[advanced]* — self-update: `mise self-update` or `vfox upgrade`
+- `P` — mise: upgrade all outdated tools (asks to confirm). vfox: fuzzy-find and add a plugin from the catalog (`vfox add`); the raw `--alias`/`--source` syntax is *[advanced]*
+- `X` *[advanced]* — prune unused/old tool versions (mise only)
 - `r` — refresh the current UI state
 - `C` — cancel every running operation, from any panel
 - `1` / `3` / `4` — jump to status / env / tasks panels (mise only)
@@ -178,11 +181,20 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `i` — install the selected tool version
 - `u` — use (install and pin) the selected tool version at project scope (`-p` for vfox)
 - `g` — install and pin the selected tool version globally (`-g` for vfox)
-- `x` — uninstall the selected tool (asks to confirm)
-- `R` — remove the selected tool from the project config (asks to confirm)
+- `x` *[advanced]* — uninstall the selected tool (asks to confirm)
+- `R` *[advanced]* — remove the selected tool from the project config (asks to confirm)
 - `p` — upgrade the selected tool to its newest version (mise only)
 - `c` — cancel the selected tool's operation
 - `C` — cancel all running operations
+
+### Advanced features
+
+Maintenance and config-mutating actions — trust, global config editing, doctor, self-update, prune,
+uninstall, remove-from-config, and the Add Plugin `--alias`/`--source` syntax — are hidden by
+default so a new session's keyboard surface starts small. Press `V` to reveal them: it flips
+`advancedFeatures` on for the session, unlocks the `[advanced]` keys above, and shows an
+**Advanced** panel in the left sidebar listing them for the active backend. Press `V` again to
+hide it. Launch with `--advanced-features` to start a session with it already on.
 
 ### Tasks panel (mise only)
 

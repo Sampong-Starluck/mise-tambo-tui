@@ -70,6 +70,13 @@ public final class UiState {
      * explains instead of running and drops out of the footer and help.
      */
     private boolean selfUpdateDisabled = false;
+    /**
+     * Set at startup from {@code --advanced-features}, and toggleable in-app with {@code V}.
+     * Gates the maintenance/config keys (P's --alias/--source syntax, T, E, D, U, X, x, R) and
+     * shows the {@link com.sampong.tambo.tui.components.AdvancedPanel} sidebar card that lists
+     * them — off by default so a new user's keyboard surface starts small.
+     */
+    private boolean advancedFeatures = false;
 
     /** The most recently run task and its args, for the re-run shortcut. */
     @Nullable

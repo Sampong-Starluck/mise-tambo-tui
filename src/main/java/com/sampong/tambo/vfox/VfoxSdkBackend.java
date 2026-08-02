@@ -111,7 +111,9 @@ public class VfoxSdkBackend implements SdkVersionBackend {
 
     @Override
     public List<String> listRemoteVersions(String tool) {
-        CliResult result = cli.run(List.of("search", tool), SEARCH_TIMEOUT);
+        // Plain `vfox search <tool>` only returns a short recent-versions page; "all" is
+        // required to get the full list the fuzzy-find version step is meant to browse.
+        CliResult result = cli.run(List.of("search", tool, "all"), SEARCH_TIMEOUT);
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }

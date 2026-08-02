@@ -34,12 +34,13 @@ import lombok.RequiredArgsConstructor;
  * The "Add SDK" modal: step 1 fuzzy-finds a tool by typing into a real input box, step 2
  * fuzzy-finds the version the same way. Esc steps back.
  * <p>
- * Behavior forks by backend. For mise, step 1 browses the full {@code mise registry} and
- * Enter on step 2 runs {@code mise use} (install + pin; Ctrl+G toggles local/global). For
- * vfox, step 1 lists only plugins that already have an installed version (vfox requires a
- * plugin be registered — via the separate {@code P} "add plugin" flow — before it has
- * anything to list here), already-installed versions are marked, and Enter on step 2 only
- * runs {@code vfox install} — pinning stays a separate step in the Tools panel.
+ * Step 1 browses the full catalog for both backends — {@code mise registry} or {@code vfox
+ * available} — so a plugin shows up here whether or not it was registered beforehand via the
+ * separate {@code P} "add plugin" flow; {@link com.sampong.tambo.vfox.VfoxSdkBackend#install}
+ * re-runs {@code vfox add} itself before installing, so picking an unregistered plugin here
+ * just works. Behavior still forks on step 2: mise's Enter runs {@code mise use} (install +
+ * pin; Ctrl+G toggles local/global), vfox's Enter only runs {@code vfox install} — already-
+ * installed versions are marked, and pinning stays a separate step in the Tools panel.
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
@@ -70,17 +71,12 @@ public final class RegistryModal {
     }
 
     public void open() {
-        if (!ctx.state().vfox()) {
-            // The registry is ~200 KB of JSON that only this modal reads, so it is
-            // fetched here on first open rather than at startup — a session that
-            // never adds an SDK never pays for it at all. Reopening after a failed
-            // fetch is the user asking to try again; a loaded registry is reused,
-            // since nothing done locally changes what mise can install.
-            ctx.state().registryLazy().retryIfFailed();
-            ctx.actions().ensureRegistry();
-        }
-        // vfox never fetches the remote plugin catalog here — the tool step lists
-        // already-installed plugins (from `vfox list`, loaded at startup) instead.
+        // The registry (mise's ~200 KB of JSON, or vfox's `available` catalog) is fetched
+        // here on first open rather than at startup — a session that never adds an SDK never
+        // pays for it at all. Reopening after a failed fetch is the user asking to try again;
+        // a loaded registry is reused, since nothing done locally changes what's installable.
+        ctx.state().registryLazy().retryIfFailed();
+        ctx.actions().ensureRegistry();
         preOpenFocus = ctx.focusedId();
         open = true;
         step = Step.TOOL;
@@ -136,9 +132,8 @@ public final class RegistryModal {
                 ? (vfox ? "enter choose plugin   esc close" : "enter choose SDK   esc close")
                 : (vfox ? "enter install   esc back" : "enter install   ctrl+g toggle local/global   esc back")).dim());
 
-        String title = vfox
-                ? "Add SDK — installed plugins (" + installedPlugins().size() + ")"
-                : "Add SDK — registry (" + ctx.state().registry().size() + ")";
+        String title = (vfox ? "Add SDK — vfox catalog (" : "Add SDK — registry (")
+                + ctx.state().registry().size() + ")";
         return dialog(title, content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
     }
@@ -150,23 +145,13 @@ public final class RegistryModal {
 
         content.add(searchInputRow("Search SDK", "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
-        if (vfox) {
-            if (!ctx.state().toolsLazy().everLoaded()) {
-                content.add(text("Loading…").dim());
-            } else if (ctx.state().tools().isEmpty()) {
-                content.add(text("No installed plugins — press P to add one, then install a version here").dim());
-            } else if (matches.isEmpty()) {
-                content.add(text("No installed plugin matches \"" + query + "\"").dim());
-            } else {
-                addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
-            }
-        } else if (ctx.state().registry().isEmpty()) {
+        if (ctx.state().registry().isEmpty()) {
             Lazy<List<RegistryEntry>> registry = ctx.state().registryLazy();
             content.add(text(registry.everLoaded() || registry.failed()
-                    ? "Registry unavailable"
-                    : "Loading registry…").dim());
+                    ? (vfox ? "Catalog unavailable" : "Registry unavailable")
+                    : (vfox ? "Loading catalog…" : "Loading registry…")).dim());
         } else if (matches.isEmpty()) {
-            content.add(text("No SDK matches \"" + query + "\"").dim());
+            content.add(text((vfox ? "No plugin matches \"" : "No SDK matches \"") + query + "\"").dim());
         } else {
             addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
         }
@@ -207,8 +192,8 @@ public final class RegistryModal {
         content.add(searchInputRow("Search version", "type to fuzzy find a version"));
         content.add(text(""));
         if (versionsLoading) {
-            String via = vfox ? "vfox search " : "mise ls-remote ";
-            content.add(text("Fetching versions via " + via + tool.shortName() + "…").dim());
+            String via = vfox ? "vfox search " + tool.shortName() + " all" : "mise ls-remote " + tool.shortName();
+            content.add(text("Fetching versions via " + via + "…").dim());
         } else if (matches.isEmpty()) {
             content.add(text("No version matches \"" + query + "\"").dim());
         } else {
@@ -226,16 +211,7 @@ public final class RegistryModal {
         }
     }
 
-    /** vfox-only: the tool step lists plugins that already have at least one installed version. */
-    private List<RegistryEntry> installedPlugins() {
-        return ctx.state().tools().stream()
-                .map(ToolVersion::tool)
-                .distinct()
-                .map(name -> new RegistryEntry(name, null, "installed", null))
-                .toList();
-    }
-
-    /** Whether {@code version} (as returned by {@code vfox search}) is already installed for {@code toolName}. */
+    /** Whether {@code version} (as returned by {@code vfox search ... all}) is already installed for {@code toolName}. */
     private boolean isVersionInstalled(String toolName, String version) {
         String normalized = (version.startsWith("v") || version.startsWith("V"))
                 ? version.substring(1) : version;
@@ -268,12 +244,11 @@ public final class RegistryModal {
     }
 
     private List<RegistryEntry> fuzzyTools(String query) {
-        // vfox lists already-installed plugins only (see installedPlugins()); mise still
-        // browses the full registry. Match on the short name first, then fall back to
-        // description + backends so typing a backend (e.g. "cargo", "npm", "ubi") narrows
-        // the mise list too.
-        List<RegistryEntry> pool = ctx.state().vfox() ? installedPlugins() : ctx.state().registry();
-        return Fuzzy.filter(query, pool, RegistryEntry::shortName,
+        // Both backends browse the full catalog now. Match on the short name first, then
+        // fall back to description + backends so typing a backend (e.g. "cargo", "npm",
+        // "ubi") narrows the mise list too; vfox entries carry no backends (see
+        // VfoxSdkBackend#listAvailable), so backendSummary() is just a harmless "-" there.
+        return Fuzzy.filter(query, ctx.state().registry(), RegistryEntry::shortName,
                 e -> Ui.nullToDash(e.description()) + " " + e.backendSummary());
     }
 

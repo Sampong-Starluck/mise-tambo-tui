@@ -21,6 +21,7 @@ import dev.tamboui.widgets.common.ScrollBarPolicy;
 
 import com.sampong.tambo.mise.model.ToolVersion;
 import com.sampong.tambo.tui.features.PanelFilter;
+import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
@@ -184,13 +185,17 @@ public final class ToolsPanel {
             return EventResult.HANDLED;
         }
         if (event.isChar('x') || event.code() == KeyCode.DELETE) {
-            if (t.installed()) {
+            if (!ctx.state().advancedFeatures()) {
+                ctx.state().addLog(LogLevel.INFO, "Uninstall is an advanced feature — press V to enable it");
+            } else if (t.installed()) {
                 ctx.confirm("Uninstall " + t.label() + "?", () -> ctx.actions().uninstallTool(t));
             }
             return EventResult.HANDLED;
         }
         if (event.isChar('R')) {
-            if (t.sourcePath() != null) {
+            if (!ctx.state().advancedFeatures()) {
+                ctx.state().addLog(LogLevel.INFO, "Remove from config is an advanced feature — press V to enable it");
+            } else if (t.sourcePath() != null) {
                 ctx.confirm("Remove " + t.label() + " from mise.toml?", () -> ctx.actions().removeTool(t));
             }
             return EventResult.HANDLED;

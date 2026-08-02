@@ -61,32 +61,33 @@ public final class HelpOverlay {
                 helpLine("Left/Right, h/l", "Pan the focused panel / command log horizontally"),
                 helpLine("End", "Log: resume following the newest entry"),
                 helpLine("Mouse", "Click to focus a panel, wheel to scroll"),
-                helpLine("a", vfox ? "Install a version of an already-added plugin"
+                helpLine("a", vfox ? "Add SDK — fuzzy-find the vfox catalog and install a version"
                         : "Add SDK — fuzzy-find registry modal"),
                 helpLine("e", "Edit project " + configFile + " in-app (Ctrl+S save, Esc discard)")));
 
+        lines.add(helpLine("V", "Toggle the Advanced panel — reveals [advanced] keys below"));
         if (!vfox) {
-            lines.add(helpLine("E", "Edit global mise config.toml in-app"));
+            lines.add(helpLine("E", "[advanced] Edit global mise config.toml in-app"));
         }
         lines.add(helpLine("A", "Activate " + tool
                 + " in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"));
         if (vfox) {
-            lines.add(helpLine("P", "Add a vfox plugin (no version install) — supports --alias/--source"));
+            lines.add(helpLine("P", "Add a vfox plugin — fuzzy-find the catalog, or [advanced] type name [--alias/--source]"));
         }
         if (!vfox) {
-            lines.add(helpLine("T", "Trust this project's mise config (mise trust)"));
-            lines.add(helpLine("D", "Run mise doctor — full report in the log"));
-            lines.add(helpLine("U", ctx.state().selfUpdateDisabled()
+            lines.add(helpLine("T", "[advanced] Trust this project's mise config (mise trust)"));
+            lines.add(helpLine("D", "[advanced] Run mise doctor — full report in the log"));
+            lines.add(helpLine("U", "[advanced] " + (ctx.state().selfUpdateDisabled()
                     ? "mise self-update — unavailable, update mise via your package manager"
-                    : "mise self-update"));
-            lines.add(helpLine("X", "Prune unused/old tool versions (asks to confirm)"));
+                    : "mise self-update")));
+            lines.add(helpLine("X", "[advanced] Prune unused/old tool versions (asks to confirm)"));
         } else {
-            lines.add(helpLine("U", "vfox upgrade — update vfox itself to the latest version"));
+            lines.add(helpLine("U", "[advanced] vfox upgrade — update vfox itself to the latest version"));
         }
         lines.add(helpLine("i", "Install selected tool"));
         lines.add(helpLine("u", "Apply selected tool to project " + configFile));
-        lines.add(helpLine("x", "Uninstall selected tool (asks to confirm)"));
-        lines.add(helpLine("R", "Remove selected tool from project " + configFile + " (asks to confirm)"));
+        lines.add(helpLine("x", "[advanced] Uninstall selected tool (asks to confirm)"));
+        lines.add(helpLine("R", "[advanced] Remove selected tool from project " + configFile + " (asks to confirm)"));
         lines.add(helpLine("g", "Install/set as global default"));
         if (!vfox) {
             lines.add(helpLine("p", "Upgrade selected tool to the newest version"));
@@ -115,6 +116,9 @@ public final class HelpOverlay {
         lines.add(text(""));
         lines.add(text("--offline at launch: shows only installed tools, blocks").dim());
         lines.add(text("install/use" + (vfox ? "/self-update" : "/upgrade/self-update") + "/Add SDK (need the network).").dim());
+        lines.add(text(""));
+        lines.add(text("[advanced] keys are hidden until V is pressed (or launch with").dim());
+        lines.add(text("--advanced-features). The Advanced panel then lists them on the left.").dim());
         lines.add(text(""));
         lines.add(text("Press ? or Esc to close").dim());
 

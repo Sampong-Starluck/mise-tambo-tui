@@ -45,6 +45,7 @@ import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.vfox.VfoxShellActivationServiceImp;
 import com.sampong.tambo.tui.components.AddPluginModal;
+import com.sampong.tambo.tui.components.AdvancedPanel;
 import com.sampong.tambo.tui.components.ConfigEditorModal;
 import com.sampong.tambo.tui.components.ConfirmModal;
 import com.sampong.tambo.tui.components.DetailPanel;
@@ -91,6 +92,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     /** A collapsed panel: just the top border with the title, plus the bottom border. */
     private static final int COLLAPSED_HEIGHT = 2;
     private static final int STATUS_HEIGHT = 8;
+    /** Fixed height of the Advanced panel — only shown once {@code V} / {@code --advanced-features} is on. */
+    private static final int ADVANCED_HEIGHT = 9;
 
     private final UiState state;
     private final MiseActions actions;
@@ -101,6 +104,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final TasksPanel tasksPanel;
     private final DetailPanel detailPanel;
     private final LogPanel logPanel;
+    private final AdvancedPanel advancedPanel;
     private final RegistryModal registryModal;
     private final ConfigEditorModal configEditor;
     private final ConfirmModal confirmModal;
@@ -121,6 +125,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.config = config;
         this.state = new UiState();
         this.state.offline(arguments.containsOption("offline"));
+        this.state.advancedFeatures(arguments.containsOption("advanced-features"));
         boolean useVfox = resolveUseVfox(arguments);
         this.state.vfox(useVfox);
         SdkVersionBackend sdkBackend = useVfox ? vfoxSdkBackend : miseSdkBackend;
@@ -134,6 +139,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.tasksPanel = new TasksPanel(this);
         this.detailPanel = new DetailPanel(this, toolsPanel, tasksPanel);
         this.logPanel = new LogPanel(this);
+        this.advancedPanel = new AdvancedPanel(this);
         this.registryModal = new RegistryModal(this);
         this.configEditor = new ConfigEditorModal(this);
         this.confirmModal = new ConfirmModal(this);
@@ -309,6 +315,18 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     // ==================== Global keys ====================
 
+    /**
+     * Gates a maintenance/config action behind {@link UiState#advancedFeatures()}; logs a nudge
+     * toward {@code V} and returns false instead of running it when the flag is off.
+     */
+    private boolean requireAdvanced(String action) {
+        if (state.advancedFeatures()) {
+            return true;
+        }
+        state.addLog(LogLevel.INFO, action + " is an advanced feature — press V to enable it");
+        return false;
+    }
+
     private void registerGlobalKeys() {
         runner().eventRouter().addGlobalHandler(event -> {
             if (!(event instanceof KeyEvent key)) {
@@ -334,6 +352,13 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 helpOverlay.open();
                 return EventResult.HANDLED;
             }
+            if (key.isChar('V')) {
+                state.advancedFeatures(!state.advancedFeatures());
+                state.addLog(LogLevel.INFO, state.advancedFeatures()
+                        ? "Advanced features enabled — see the Advanced panel"
+                        : "Advanced features hidden");
+                return EventResult.HANDLED;
+            }
             if (key.isChar('a')) {
                 if (state.offline()) {
                     state.addLog(LogLevel.INFO, "Offline mode — Add SDK needs network access");
@@ -347,7 +372,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('T') && !state.vfox()) {
-                actions.trustProject();
+                if (requireAdvanced("Trust")) {
+                    actions.trustProject();
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('e')) {
@@ -355,15 +382,21 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('E') && !state.vfox()) {
-                configEditor.open(globalConfigPath(), "global config.toml");
+                if (requireAdvanced("Editing the global config")) {
+                    configEditor.open(globalConfigPath(), "global config.toml");
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('D') && !state.vfox()) {
-                actions.runDoctor();
+                if (requireAdvanced("mise doctor")) {
+                    actions.runDoctor();
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('U')) {
-                actions.selfUpdate();
+                if (requireAdvanced(state.vfox() ? "vfox upgrade" : "mise self-update")) {
+                    actions.selfUpdate();
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('P')) {
@@ -387,7 +420,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('X') && !state.vfox()) {
-                confirm("Prune unused/old tool versions?", actions::prune);
+                if (requireAdvanced("Prune")) {
+                    confirm("Prune unused/old tool versions?", actions::prune);
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('1') && !state.vfox()) {
@@ -463,28 +498,36 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         // Status/Env/Tasks are entirely mise-derived (doctor/trust/env/tasks) with no vfox
         // equivalent, so vfox mode shows Tools alone rather than three panels of nothing.
         if (state.vfox()) {
-            return column(toolsPanel.build().constraint(fill()));
+            return state.advancedFeatures()
+                    ? column(
+                            toolsPanel.build().constraint(fill()),
+                            advancedPanel.build().constraint(length(ADVANCED_HEIGHT)))
+                    : column(toolsPanel.build().constraint(fill()));
         }
         if (terminalHeight() >= ACCORDION_HEIGHT) {
-            return column(
+            Column expanded = column(
                     statusPanel.build().constraint(length(STATUS_HEIGHT)),
                     toolsPanel.build().constraint(fill(3)),
                     envPanel.build().constraint(fill(1)),
                     tasksPanel.build().constraint(fill(2))
             );
+            return state.advancedFeatures()
+                    ? column(expanded.constraint(fill()), advancedPanel.build().constraint(length(ADVANCED_HEIGHT)))
+                    : expanded;
         }
         // lazygit-style accordion for cramped terminals: the focused panel gets all
-        // the space, every other panel collapses to just its title bar.
+        // the space, every other panel collapses to just its title bar. The Advanced
+        // panel is skipped here — there is no room to spare once panels are this tight.
         String focus = focusedId();
-        String expanded = switch (focus) {
+        String expandedId = switch (focus) {
             case PanelIds.STATUS, PanelIds.ENV, PanelIds.TASKS -> focus;
             case null, default -> PanelIds.TOOLS;
         };
         return column(
-                statusPanel.build().constraint(sidebarConstraint(expanded, PanelIds.STATUS, length(STATUS_HEIGHT))),
-                toolsPanel.build().constraint(sidebarConstraint(expanded, PanelIds.TOOLS, fill())),
-                envPanel.build().constraint(sidebarConstraint(expanded, PanelIds.ENV, fill())),
-                tasksPanel.build().constraint(sidebarConstraint(expanded, PanelIds.TASKS, fill()))
+                statusPanel.build().constraint(sidebarConstraint(expandedId, PanelIds.STATUS, length(STATUS_HEIGHT))),
+                toolsPanel.build().constraint(sidebarConstraint(expandedId, PanelIds.TOOLS, fill())),
+                envPanel.build().constraint(sidebarConstraint(expandedId, PanelIds.ENV, fill())),
+                tasksPanel.build().constraint(sidebarConstraint(expandedId, PanelIds.TASKS, fill()))
         );
     }
 
