@@ -16,6 +16,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import com.sampong.tambo.cli.CliResult;
 import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.model.DoctorInfo;
@@ -57,7 +58,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public List<ToolVersion> listTools() {
-        MiseCli.Result result = cli.run(List.of("ls", "-J"));
+        CliResult result = cli.run(List.of("ls", "-J"));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }
@@ -102,7 +103,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
         if (cli.offline()) {
             return List.of();
         }
-        MiseCli.Result result = cli.run(List.of("outdated", "-J"), Duration.ofSeconds(30));
+        CliResult result = cli.run(List.of("outdated", "-J"), Duration.ofSeconds(30));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }
@@ -131,7 +132,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public List<MiseTask> listTasks() {
-        MiseCli.Result result = cli.run(List.of("tasks", "ls", "-J"));
+        CliResult result = cli.run(List.of("tasks", "ls", "-J"));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }
@@ -146,7 +147,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public List<RegistryEntry> listRegistry() {
-        MiseCli.Result result = cli.run(List.of("registry", "-J"), Duration.ofSeconds(30));
+        CliResult result = cli.run(List.of("registry", "-J"), Duration.ofSeconds(30));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }
@@ -161,7 +162,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public Map<String, String> listEnv() {
-        MiseCli.Result result = cli.run(List.of("env", "-J"));
+        CliResult result = cli.run(List.of("env", "-J"));
         if (!result.ok() || result.stdout().isBlank()) {
             return Map.of();
         }
@@ -178,7 +179,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
     public List<String> listRemoteVersions(@NonNull String tool) {
         List<String> versions = new ArrayList<>();
         versions.add("latest");
-        MiseCli.Result result = cli.run(List.of("ls-remote", tool), Duration.ofSeconds(30));
+        CliResult result = cli.run(List.of("ls-remote", tool), Duration.ofSeconds(30));
         if (result.ok() && !result.stdout().isBlank()) {
             List<String> parsed = new ArrayList<>();
             for (String line : result.stdout().split("\n")) {
@@ -194,7 +195,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public DoctorInfo doctorSummary() {
-        MiseCli.Result result = cli.run(List.of("doctor"));
+        CliResult result = cli.run(List.of("doctor"));
         String version = "unknown";
         // `mise activate` exports MISE_SHELL / __MISE_DIFF into the launching
         // shell, and this process inherits them — the most reliable signal on
@@ -252,7 +253,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
 
     @Override
     public List<TrustStatus> trustStatus() {
-        MiseCli.Result result = cli.run(List.of("trust", "--show"));
+        CliResult result = cli.run(List.of("trust", "--show"));
         if (!result.ok() || result.stdout().isBlank()) {
             return List.of();
         }

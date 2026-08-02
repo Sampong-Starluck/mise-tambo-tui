@@ -75,11 +75,14 @@ public final class DetailPanel {
         lines.add(row(text("Source       ").dim(), text(Ui.nullToDash(t.sourceType())).dim()));
         lines.add(row(text("Install path ").dim(), text(Ui.nullToDash(t.installPath())).dim()));
         lines.add(text(""));
-        lines.add(row(
+        boolean vfox = ctx.state().vfox();
+        String useHint = vfox ? "use in project (.vfox.toml)" : "use in project (mise.toml)";
+        List<Element> hint = new ArrayList<>(List.of(
                 Ui.keyHint("i", "install"), text("   "),
-                Ui.keyHint("u", "use in project (mise.toml)"), text("   "),
+                Ui.keyHint("u", useHint), text("   "),
                 Ui.keyHint("x", "uninstall"), text("   "),
                 Ui.keyHint("g", "set global")));
+        lines.add(row(hint.toArray(new Element[0])));
     }
 
     private void addTaskDetail(List<Element> lines, MiseTask t) {
@@ -95,11 +98,15 @@ public final class DetailPanel {
     }
 
     private void addWelcome(List<Element> lines) {
-        ctx.actions().ensureDoctor();
         lines.add(text("tambo").bold().cyan());
-        lines.add(ctx.state().doctorLazy().everLoaded()
-                ? text("mise " + ctx.state().doctor().version()).fg(Color.GREEN)
-                : text("checking mise…").dim());
+        if (ctx.state().vfox()) {
+            lines.add(text("vfox").fg(Color.GREEN));
+        } else {
+            ctx.actions().ensureDoctor();
+            lines.add(ctx.state().doctorLazy().everLoaded()
+                    ? text("mise " + ctx.state().doctor().version()).fg(Color.GREEN)
+                    : text("checking mise…").dim());
+        }
         lines.add(text(""));
         lines.add(row(text("Select a panel (").dim(), text("1-4").bold().yellow(),
                 text(" or ").dim(), text("Tab").bold().yellow(), text(") to see details.").dim()));

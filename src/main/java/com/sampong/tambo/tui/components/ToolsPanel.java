@@ -64,7 +64,10 @@ public final class ToolsPanel {
         // `mise outdated` feeds nothing but the "↑ version" marker on a row, and
         // it is the slowest call in the app (network). Pulling it in from here
         // lets the list paint from `mise ls` alone and gain the markers later.
-        ctx.actions().ensureOutdated();
+        // No vfox equivalent exists, so this is skipped entirely in vfox mode.
+        if (!ctx.state().vfox()) {
+            ctx.actions().ensureOutdated();
+        }
         int total = ctx.state().tools().size();
         List<ToolVersion> items = visibleItems();
 
@@ -196,7 +199,9 @@ public final class ToolsPanel {
             ctx.actions().useTool(t.label(), true);
             return EventResult.HANDLED;
         }
-        if (event.isChar('p')) {
+        if (event.isChar('p') && !ctx.state().vfox()) {
+            // upgradeTool always shells to mise directly (no vfox equivalent), so this must
+            // stay gated here rather than inside MiseActions.
             ctx.actions().upgradeTool(t);
             return EventResult.HANDLED;
         }

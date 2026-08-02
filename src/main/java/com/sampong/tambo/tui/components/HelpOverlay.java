@@ -5,6 +5,9 @@ import static dev.tamboui.toolkit.Toolkit.length;
 import static dev.tamboui.toolkit.Toolkit.row;
 import static dev.tamboui.toolkit.Toolkit.text;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 
@@ -42,55 +45,81 @@ public final class HelpOverlay {
     }
 
     public Element build() {
-        return dialog("Help",
-                text("tambo — a lazygit-style TUI for mise").bold(),
+        boolean vfox = ctx.state().vfox();
+        String tool = vfox ? "vfox" : "mise";
+        String configFile = vfox ? ".vfox.toml" : "mise.toml";
+
+        List<Element> lines = new ArrayList<>(List.of(
+                text("tambo — a lazygit-style TUI for " + tool).bold(),
                 text(""),
-                helpLine("1-5", "Jump to a panel (5 = command log)"),
+                helpLine(vfox ? "2, 5" : "1-5", "Jump to a panel (5 = command log)"),
                 helpLine("Tab / Shift+Tab", "Cycle panels"),
                 helpLine("Up/Down, j/k", "Move selection / scroll"),
-                helpLine("/", "Filter the focused list (Tools/Env/Tasks); Esc clears"),
+                helpLine("/", vfox ? "Filter the focused list; Esc clears"
+                        : "Filter the focused list (Tools/Env/Tasks); Esc clears"),
                 helpLine("PgUp/PgDn", "Page up/down"),
                 helpLine("Left/Right, h/l", "Pan the focused panel / command log horizontally"),
                 helpLine("End", "Log: resume following the newest entry"),
                 helpLine("Mouse", "Click to focus a panel, wheel to scroll"),
-                helpLine("a", "Add SDK — fuzzy-find registry modal"),
-                helpLine("e", "Edit project mise.toml in-app (Ctrl+S save, Esc discard)"),
-                helpLine("E", "Edit global mise config.toml in-app"),
-                helpLine("A", "Activate mise in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"),
-                helpLine("T", "Trust this project's mise config (mise trust)"),
-                helpLine("D", "Run mise doctor — full report in the log"),
-                helpLine("U", ctx.state().selfUpdateDisabled()
-                        ? "mise self-update — unavailable, update mise via your package manager"
-                        : "mise self-update"),
-                helpLine("X", "Prune unused/old tool versions (asks to confirm)"),
-                helpLine("i", "Install selected tool"),
-                helpLine("u", "Apply selected tool to project mise.toml"),
-                helpLine("x", "Uninstall selected tool (asks to confirm)"),
-                helpLine("R", "Remove selected tool from mise.toml (asks to confirm)"),
-                helpLine("g", "Install/set as global default"),
-                helpLine("p", "Upgrade selected tool to the newest version"),
-                helpLine("P", "Upgrade all outdated tools (asks to confirm)"),
-                helpLine("Enter", "Run selected task"),
-                helpLine(":", "Run selected task with arguments"),
-                helpLine(".", "Re-run the last task"),
-                helpLine("c", "Cancel the selected tool/task (or the only one running)"),
-                helpLine("C", "Cancel every running operation, from any panel"),
-                helpLine("y", "Env panel: copy the selected variable's value"),
-                helpLine("r", "Refresh"),
-                helpLine("q", "Quit"),
-                helpLine("?", "Toggle this help"),
-                text(""),
-                text("In the Add SDK modal: type to fuzzy find, Enter to choose").dim(),
-                text("the SDK, then again for the version. Ctrl+G = local/global.").dim(),
-                text(""),
-                text("Config: ~/.config/tambo/tambo.properties (theme.* colours,").dim(),
-                text("keys.* nav overrides). $TAMBO_CONFIG_DIR overrides the path.").dim(),
-                text(""),
-                text("--offline at launch: shows only installed tools, blocks").dim(),
-                text("install/use/upgrade/self-update/Add SDK (need the network).").dim(),
-                text(""),
-                text("Press ? or Esc to close").dim()
-        ).rounded().borderColor(Color.CYAN).width(64);
+                helpLine("a", vfox ? "Install a version of an already-added plugin"
+                        : "Add SDK — fuzzy-find registry modal"),
+                helpLine("e", "Edit project " + configFile + " in-app (Ctrl+S save, Esc discard)")));
+
+        if (!vfox) {
+            lines.add(helpLine("E", "Edit global mise config.toml in-app"));
+        }
+        lines.add(helpLine("A", "Activate " + tool
+                + " in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"));
+        if (vfox) {
+            lines.add(helpLine("P", "Add a vfox plugin (no version install) — supports --alias/--source"));
+        }
+        if (!vfox) {
+            lines.add(helpLine("T", "Trust this project's mise config (mise trust)"));
+            lines.add(helpLine("D", "Run mise doctor — full report in the log"));
+            lines.add(helpLine("U", ctx.state().selfUpdateDisabled()
+                    ? "mise self-update — unavailable, update mise via your package manager"
+                    : "mise self-update"));
+            lines.add(helpLine("X", "Prune unused/old tool versions (asks to confirm)"));
+        } else {
+            lines.add(helpLine("U", "vfox upgrade — update vfox itself to the latest version"));
+        }
+        lines.add(helpLine("i", "Install selected tool"));
+        lines.add(helpLine("u", "Apply selected tool to project " + configFile));
+        lines.add(helpLine("x", "Uninstall selected tool (asks to confirm)"));
+        lines.add(helpLine("R", "Remove selected tool from project " + configFile + " (asks to confirm)"));
+        lines.add(helpLine("g", "Install/set as global default"));
+        if (!vfox) {
+            lines.add(helpLine("p", "Upgrade selected tool to the newest version"));
+            lines.add(helpLine("P", "Upgrade all outdated tools (asks to confirm)"));
+        }
+        if (!vfox) {
+            lines.add(helpLine("Enter", "Run selected task"));
+            lines.add(helpLine(":", "Run selected task with arguments"));
+            lines.add(helpLine(".", "Re-run the last task"));
+        }
+        lines.add(helpLine("c", "Cancel the selected tool/task (or the only one running)"));
+        lines.add(helpLine("C", "Cancel every running operation, from any panel"));
+        if (!vfox) {
+            lines.add(helpLine("y", "Env panel: copy the selected variable's value"));
+        }
+        lines.add(helpLine("r", "Refresh"));
+        lines.add(helpLine("q", "Quit"));
+        lines.add(helpLine("?", "Toggle this help"));
+        lines.add(text(""));
+        lines.add(text("In the Add SDK modal: type to fuzzy find, Enter to choose").dim());
+        lines.add(text(vfox ? "the plugin, then again for the version to install."
+                : "the SDK, then again for the version. Ctrl+G = local/global.").dim());
+        lines.add(text(""));
+        lines.add(text("Config: ~/.config/tambo/tambo.properties (theme.* colours,").dim());
+        lines.add(text("keys.* nav overrides). $TAMBO_CONFIG_DIR overrides the path.").dim());
+        lines.add(text(""));
+        lines.add(text("--offline at launch: shows only installed tools, blocks").dim());
+        lines.add(text("install/use" + (vfox ? "/self-update" : "/upgrade/self-update") + "/Add SDK (need the network).").dim());
+        lines.add(text(""));
+        lines.add(text("Press ? or Esc to close").dim());
+
+        return dialog("Help", lines.toArray(new Element[0]))
+                .rounded().borderColor(Color.CYAN).width(64);
     }
 
     private Element helpLine(String key, String description) {

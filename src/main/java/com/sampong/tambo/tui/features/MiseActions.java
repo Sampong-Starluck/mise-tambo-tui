@@ -13,8 +13,8 @@ import java.util.stream.Collectors;
 
 import org.springframework.core.task.AsyncTaskExecutor;
 
+import com.sampong.tambo.cli.CliResult;
 import com.sampong.tambo.mise.CancelRegistry;
-import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
@@ -22,6 +22,8 @@ import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.OutdatedTool;
 import com.sampong.tambo.mise.model.ToolVersion;
+import com.sampong.tambo.sdk.SdkVersionBackend;
+import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
@@ -57,6 +59,15 @@ public final class MiseActions {
     /** Marshals a runnable onto the TUI render thread. */
     @NonNull
     private final Consumer<Runnable> uiThread;
+    /** Install/use/list backend for SDK versions: mise by default, or vfox with {@code --backend=vfox}. */
+    @NonNull
+    private final SdkVersionBackend backend;
+    /**
+     * Always the concrete vfox backend, regardless of which one is active — used only by
+     * {@link #addPlugin}, a vfox-exclusive action with no mise equivalent in this app.
+     */
+    @NonNull
+    private final VfoxSdkBackend vfoxBackend;
 
     // ==================== Loading / refresh ====================
 
@@ -93,12 +104,16 @@ public final class MiseActions {
      * through a joined snapshot, so no single call can hold up the rest.
      */
     private void loadEssentials() {
-        loadLazy(state.toolsLazy(), "tools", query::listTools,
+        loadLazy(state.toolsLazy(), "tools", backend::listTools,
                 loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tools"));
-        loadLazy(state.tasksLazy(), "tasks", query::listTasks,
-                loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tasks"));
-        loadLazy(state.envLazy(), "env", query::listEnv, null);
-        loadLazy(state.trustLazy(), "trust", query::trustStatus, null);
+        // Tasks/env/trust are mise-only (no vfox equivalent) and their panels are hidden when
+        // vfox is active — skip them so vfox mode never shells out to mise at all.
+        if (!backend.name().equals("vfox")) {
+            loadLazy(state.tasksLazy(), "tasks", query::listTasks,
+                    loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tasks"));
+            loadLazy(state.envLazy(), "env", query::listEnv, null);
+            loadLazy(state.trustLazy(), "trust", query::trustStatus, null);
+        }
     }
 
     // ==================== Lazy tiers ====================
@@ -122,11 +137,12 @@ public final class MiseActions {
     }
 
     /**
-     * P3 — {@code mise registry} (~200 KB of JSON). Read by nothing but the
-     * Add-SDK modal, so it is never fetched unless the user opens it.
+     * P3 — the registry browsed by the Add-SDK modal ({@code mise registry} or
+     * {@code vfox available}, depending on the active backend). Never fetched unless the
+     * user opens the modal.
      */
     public void ensureRegistry() {
-        loadLazy(state.registryLazy(), "registry", query::listRegistry, null);
+        loadLazy(state.registryLazy(), "registry", backend::listAvailable, null);
     }
 
     /**
@@ -181,9 +197,9 @@ public final class MiseActions {
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise install " + key);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " install " + key);
         submitBackground("install " + key, key,
-                () -> tools.install(key, liveLogLine(key), key),
+                () -> backend.install(key, liveLogLine(key), key),
                 result -> {
                     logResult(result, "Installed " + key, "Install failed: " + key);
                     refresh();
@@ -195,9 +211,9 @@ public final class MiseActions {
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise uninstall " + key);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " uninstall " + key);
         submitBackground("uninstall " + key, key,
-                () -> tools.uninstall(key),
+                () -> backend.uninstall(key),
                 result -> {
                     logResult(result, "Uninstalled " + key, "Uninstall failed: " + key);
                     refresh();
@@ -205,25 +221,25 @@ public final class MiseActions {
     }
 
     /**
-     * Runs {@code mise unuse tool@version} — drops the entry from whichever
-     * {@code mise.toml} declares it and prunes the installed version if nothing
-     * else still references it.
+     * Runs {@code <backend> unuse tool@version} — drops the entry from whichever scope
+     * (project or global) declares it, pruning the installed version too where the
+     * backend does that automatically (mise; vfox's {@code unuse} does not).
      */
     public void removeTool(@NonNull ToolVersion t) {
         String key = t.label();
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise unuse " + key);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " unuse " + key);
         submitBackground("remove " + key, key,
-                () -> tools.remove(key),
+                () -> backend.remove(key),
                 result -> {
-                    logResult(result, "Removed " + key + " from mise.toml", "Remove failed: " + key);
+                    logResult(result, "Removed " + key, "Remove failed: " + key);
                     refresh();
                 });
     }
 
-    /** Runs {@code mise use [-g] tool@version} — installs and writes the config entry. */
+    /** Runs {@code <backend> use [-g] tool@version} — installs and pins it at project or global scope. */
     public void useTool(@NonNull String toolAtVersion, boolean global) {
         if (blockedOffline("installing")) {
             return;
@@ -235,14 +251,14 @@ public final class MiseActions {
         if (state.markBusy(key)) {
             return;
         }
-        String args = global ? "mise use -g " + toolAtVersion : "mise use " + toolAtVersion;
+        String args = backend.name() + " use " + (global ? "-g " : "") + toolAtVersion;
         state.addLog(LogLevel.CMD, "$ " + args);
         submitBackground(args, key,
-                () -> tools.use(toolAtVersion, global, liveLogLine(key), key),
+                () -> backend.use(toolAtVersion, global, liveLogLine(key), key),
                 result -> {
                     logResult(result,
                             global ? "Set " + toolAtVersion + " as global default"
-                                    : "Applied " + toolAtVersion + " to ./mise.toml",
+                                    : "Applied " + toolAtVersion + " at project scope",
                             "Failed: " + args);
                     refresh();
                 });
@@ -452,8 +468,12 @@ public final class MiseActions {
             "mise's self-update is disabled in this build — it was installed by a package manager, "
                     + "so update it from there";
 
-    /** Runs {@code mise self-update}, streaming progress into the command log. */
+    /** Runs {@code mise self-update} (or {@code vfox upgrade} when vfox is active), streaming progress into the command log. */
     public void selfUpdate() {
+        if (backend.name().equals("vfox")) {
+            vfoxSelfUpdate();
+            return;
+        }
         // Once mise has told us the feature is compiled out, that answer holds
         // for the life of this binary: explain instead of spawning a process
         // that is guaranteed to fail.
@@ -482,8 +502,26 @@ public final class MiseActions {
                 });
     }
 
+    /** Runs {@code vfox upgrade}, streaming progress into the command log. */
+    private void vfoxSelfUpdate() {
+        if (blockedOffline("upgrading")) {
+            return;
+        }
+        String key = "self-update";
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ vfox upgrade");
+        submitBackground("vfox upgrade", key,
+                () -> vfoxBackend.selfUpdate(liveLogLine(key)),
+                result -> {
+                    logResult(result, "vfox is up to date", "vfox upgrade failed");
+                    refresh();
+                });
+    }
+
     /** True when a failed self-update was refused outright rather than merely erroring. */
-    private static boolean mentionsDisabledSelfUpdate(MiseCli.Result result) {
+    private static boolean mentionsDisabledSelfUpdate(CliResult result) {
         // self-update streams with stderr merged into stdout, but check both so
         // this keeps working if that ever changes.
         return (result.stdout() + result.stderr()).toLowerCase()
@@ -550,12 +588,42 @@ public final class MiseActions {
 
     /** Fetches installable versions of a tool; {@code onDone} runs on the render thread. */
     public void fetchRemoteVersions(@NonNull String tool, @NonNull Consumer<List<String>> onDone) {
-        state.addLog(LogLevel.CMD, "$ mise ls-remote " + tool);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " ls-remote " + tool);
         submitBackground("ls-remote " + tool,
-                () -> query.listRemoteVersions(tool),
+                () -> backend.listRemoteVersions(tool),
                 versions -> {
-                    state.addLog(LogLevel.OK, (versions.size() - 1) + " versions of " + tool + " available");
+                    // mise's list is prefixed with a synthetic "latest" entry; vfox's isn't.
+                    int realCount = backend.name().equals("mise") ? Math.max(0, versions.size() - 1) : versions.size();
+                    state.addLog(LogLevel.OK, realCount + " versions of " + tool + " available");
                     onDone.accept(versions);
+                });
+    }
+
+    /**
+     * Runs {@code vfox add <rawInput tokens>} — registers a plugin standalone, without
+     * installing any version. {@code rawInput} is split on whitespace and passed straight
+     * through, so it can be a bare name ("nodejs") or include {@code --alias}/{@code --source}
+     * exactly as vfox's own CLI accepts them. No-op when mise is the active backend.
+     */
+    public void addPlugin(@NonNull String rawInput) {
+        if (!backend.name().equals("vfox")) {
+            return;
+        }
+        String trimmed = rawInput.strip();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        List<String> args = List.of(trimmed.split("\\s+"));
+        String key = "add-plugin:" + args.get(0);
+        if (state.markBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ vfox add " + trimmed);
+        submitBackground("add plugin " + trimmed, key,
+                () -> vfoxBackend.addPlugin(args),
+                result -> {
+                    logResult(result, "Added plugin " + args.get(0), "Add plugin failed: " + args.get(0));
+                    refresh();
                 });
     }
 
@@ -651,7 +719,7 @@ public final class MiseActions {
         return false;
     }
 
-    private void logResult(MiseCli.Result result, String okMessage, String failMessagePrefix) {
+    private void logResult(CliResult result, String okMessage, String failMessagePrefix) {
         if (result.ok()) {
             state.addLog(LogLevel.OK, okMessage);
         } else {

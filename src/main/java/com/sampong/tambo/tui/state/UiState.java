@@ -57,6 +57,12 @@ public final class UiState {
     /** Set once at startup from {@code --offline}; gates network-requiring actions. */
     private boolean offline = false;
     /**
+     * Set once at startup: true when this project resolved to the vfox backend rather than
+     * mise. Panels use this to hide mise-only surfaces (tasks, status, env, trust/doctor/
+     * prune/upgrade-all/self-update) that vfox has no equivalent for.
+     */
+    private boolean vfox = false;
+    /**
      * Set when {@code mise self-update} reports that the feature was compiled
      * out — the case for every package-manager build, since the binary is owned
      * by the package database and must not overwrite itself. Learned from the

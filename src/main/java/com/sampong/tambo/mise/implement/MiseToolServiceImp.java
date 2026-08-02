@@ -7,6 +7,7 @@ import java.util.function.Consumer;
 
 import org.springframework.stereotype.Service;
 
+import com.sampong.tambo.cli.CliResult;
 import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseToolService;
 
@@ -26,23 +27,23 @@ public class MiseToolServiceImp implements MiseToolService {
     private final MiseCli cli;
 
     @Override
-    public MiseCli.Result install(@NonNull String toolAtVersion, @NonNull Consumer<String> onLine,
+    public CliResult install(@NonNull String toolAtVersion, @NonNull Consumer<String> onLine,
                                   @NonNull String cancelKey) {
         return cli.runStreaming(List.of("install", toolAtVersion), Duration.ofMinutes(10), onLine, cancelKey);
     }
 
     @Override
-    public MiseCli.Result uninstall(@NonNull String toolAtVersion) {
+    public CliResult uninstall(@NonNull String toolAtVersion) {
         return cli.run(List.of("uninstall", toolAtVersion), Duration.ofMinutes(2));
     }
 
     @Override
-    public MiseCli.Result remove(@NonNull String toolAtVersion) {
+    public CliResult remove(@NonNull String toolAtVersion) {
         return cli.run(List.of("unuse", toolAtVersion), Duration.ofMinutes(2));
     }
 
     @Override
-    public MiseCli.Result upgrade(@NonNull String tool, @NonNull Consumer<String> onLine,
+    public CliResult upgrade(@NonNull String tool, @NonNull Consumer<String> onLine,
                                   @NonNull String cancelKey) {
         List<String> args = new ArrayList<>();
         args.add("upgrade");
@@ -53,7 +54,7 @@ public class MiseToolServiceImp implements MiseToolService {
     }
 
     @Override
-    public MiseCli.Result use(@NonNull String toolAtVersion, boolean global, @NonNull Consumer<String> onLine,
+    public CliResult use(@NonNull String toolAtVersion, boolean global, @NonNull Consumer<String> onLine,
                               @NonNull String cancelKey) {
         List<String> args = new ArrayList<>();
         args.add("use");
@@ -65,7 +66,7 @@ public class MiseToolServiceImp implements MiseToolService {
     }
 
     @Override
-    public MiseCli.Result runTask(@NonNull String taskName, @NonNull String args, @NonNull Consumer<String> onLine,
+    public CliResult runTask(@NonNull String taskName, @NonNull String args, @NonNull Consumer<String> onLine,
                                   @NonNull String cancelKey) {
         List<String> command = new ArrayList<>();
         command.add("run");

@@ -25,16 +25,26 @@ import dev.tamboui.tui.bindings.BindingSets;
 import dev.tamboui.tui.bindings.Bindings;
 import dev.tamboui.tui.event.KeyEvent;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import com.sampong.tambo.mise.CancelRegistry;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.ShellActivationService;
+import com.sampong.tambo.mise.implement.MiseSdkBackend;
+import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
+import com.sampong.tambo.sdk.SdkVersionBackend;
+import com.sampong.tambo.vfox.VfoxSdkBackend;
+import com.sampong.tambo.vfox.VfoxShellActivationServiceImp;
+import com.sampong.tambo.tui.components.AddPluginModal;
 import com.sampong.tambo.tui.components.ConfigEditorModal;
 import com.sampong.tambo.tui.components.ConfirmModal;
 import com.sampong.tambo.tui.components.DetailPanel;
@@ -95,20 +105,28 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final ConfigEditorModal configEditor;
     private final ConfirmModal confirmModal;
     private final TaskArgsModal taskArgsModal;
+    private final AddPluginModal addPluginModal;
     private final HelpOverlay helpOverlay;
 
     private final TamboConfig config;
 
     public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
-                      @NonNull MiseMaintenanceService maintenance, @NonNull ShellActivationService activation,
+                      @NonNull MiseMaintenanceService maintenance,
+                      @NonNull MiseShellActivationServiceImp miseActivation,
+                      @NonNull VfoxShellActivationServiceImp vfoxActivation,
                       @NonNull CancelRegistry cancelRegistry, @NonNull TamboConfig config,
+                      @NonNull MiseSdkBackend miseSdkBackend, @NonNull VfoxSdkBackend vfoxSdkBackend,
                       @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
                       @NonNull ApplicationArguments arguments) {
         this.config = config;
         this.state = new UiState();
         this.state.offline(arguments.containsOption("offline"));
+        boolean useVfox = resolveUseVfox(arguments);
+        this.state.vfox(useVfox);
+        SdkVersionBackend sdkBackend = useVfox ? vfoxSdkBackend : miseSdkBackend;
+        ShellActivationService activation = useVfox ? vfoxActivation : miseActivation;
         this.actions = new MiseActions(query, tools, maintenance, activation, cancelRegistry,
-                executor, state, r -> runner().runOnRenderThread(r));
+                executor, state, r -> runner().runOnRenderThread(r), sdkBackend, vfoxSdkBackend);
 
         this.statusPanel = new StatusPanel(this);
         this.toolsPanel = new ToolsPanel(this);
@@ -120,7 +138,91 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.configEditor = new ConfigEditorModal(this);
         this.confirmModal = new ConfirmModal(this);
         this.taskArgsModal = new TaskArgsModal(this);
+        this.addPluginModal = new AddPluginModal(this);
         this.helpOverlay = new HelpOverlay(this);
+    }
+
+    private static final String MISE_CONFIG_FILE = "mise.toml";
+    /** vfox's actual project-scope config filename — dot-prefixed, per vfox's own convention. */
+    private static final String VFOX_CONFIG_FILE = ".vfox.toml";
+
+    /** The project-scope config filename for whichever backend is active — used by the 'e' key. */
+    private String projectConfigFileName() {
+        return state.vfox() ? VFOX_CONFIG_FILE : MISE_CONFIG_FILE;
+    }
+
+    /**
+     * Picks the SDK backend for this project — used consistently for both tool
+     * install/use/list and shell activation. {@code --backend=mise|vfox} is an explicit
+     * override; otherwise this detects an existing {@link #MISE_CONFIG_FILE} or
+     * {@link #VFOX_CONFIG_FILE} in the working directory. If neither exists, it asks once on
+     * the console — before the TUI takes over the terminal, so plain stdin/stdout still work —
+     * and creates the chosen config file so the choice sticks on the next launch.
+     */
+    private static boolean resolveUseVfox(ApplicationArguments arguments) {
+        List<String> values = arguments.getOptionValues("backend");
+        if (values != null) {
+            if (values.stream().anyMatch(v -> v.equalsIgnoreCase("vfox"))) {
+                return true;
+            }
+            if (values.stream().anyMatch(v -> v.equalsIgnoreCase("mise"))) {
+                return false;
+            }
+        }
+
+        Path cwd = Path.of("").toAbsolutePath();
+        if (Files.exists(cwd.resolve(MISE_CONFIG_FILE))) {
+            return false;
+        }
+        if (Files.exists(cwd.resolve(VFOX_CONFIG_FILE))) {
+            return true;
+        }
+
+        boolean useVfox = promptForVfox();
+        createProjectConfig(cwd, useVfox);
+        return useVfox;
+    }
+
+    /** Asks once on the console which backend to use. Blank input or closed stdin defaults to mise. */
+    private static boolean promptForVfox() {
+        System.out.println();
+        System.out.println("No " + MISE_CONFIG_FILE + " or " + VFOX_CONFIG_FILE + " found in this project.");
+        System.out.print("Which version manager should tambo use here? [mise/vfox] (default mise): ");
+        System.out.flush();
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
+            while (true) {
+                String line = in.readLine();
+                if (line == null || line.isBlank()) {
+                    return false;
+                }
+                String answer = line.strip().toLowerCase();
+                if (answer.equals("vfox")) {
+                    return true;
+                }
+                if (answer.equals("mise")) {
+                    return false;
+                }
+                System.out.print("Please type \"mise\" or \"vfox\": ");
+                System.out.flush();
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Creates an empty project-scope config file for the chosen backend, if one doesn't
+     * already exist. Both mise and vfox populate it themselves on the first {@code use}.
+     */
+    private static void createProjectConfig(Path cwd, boolean vfox) {
+        Path file = cwd.resolve(vfox ? VFOX_CONFIG_FILE : MISE_CONFIG_FILE);
+        try {
+            if (Files.notExists(file)) {
+                Files.writeString(file, vfox ? "" : "[tools]\n");
+            }
+        } catch (IOException e) {
+            // Best-effort — mise/vfox create their own config on the first `use` anyway.
+        }
     }
 
     // ==================== UiContext ====================
@@ -158,7 +260,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     public boolean modalOpen() {
         return !registryModal.isOpen() && !configEditor.isOpen() && !confirmModal.isOpen()
-                && !taskArgsModal.isOpen();
+                && !taskArgsModal.isOpen() && !addPluginModal.isOpen();
     }
 
     @Override
@@ -199,7 +301,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     protected void onStart() {
-        state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for mise. Press ? for help, a to add an SDK.");
+        state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for " + (state.vfox() ? "vfox" : "mise")
+                + ". Press ? for help, a to add an SDK.");
         registerGlobalKeys();
         actions.loadInitial();
     }
@@ -222,7 +325,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 confirmModal.handleKey(key);
                 return EventResult.HANDLED;
             }
-            if (registryModal.isOpen() || configEditor.isOpen() || taskArgsModal.isOpen()) {
+            if (registryModal.isOpen() || configEditor.isOpen() || taskArgsModal.isOpen() || addPluginModal.isOpen()) {
                 // The modal's input box / text area is focused and consumes everything
                 // it needs; never let panel shortcuts fire underneath it.
                 return EventResult.UNHANDLED;
@@ -243,19 +346,19 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 actions.activateMise();
                 return EventResult.HANDLED;
             }
-            if (key.isChar('T')) {
+            if (key.isChar('T') && !state.vfox()) {
                 actions.trustProject();
                 return EventResult.HANDLED;
             }
             if (key.isChar('e')) {
-                configEditor.open(Path.of("mise.toml"), "./mise.toml");
+                configEditor.open(Path.of(projectConfigFileName()), "./" + projectConfigFileName());
                 return EventResult.HANDLED;
             }
-            if (key.isChar('E')) {
+            if (key.isChar('E') && !state.vfox()) {
                 configEditor.open(globalConfigPath(), "global config.toml");
                 return EventResult.HANDLED;
             }
-            if (key.isChar('D')) {
+            if (key.isChar('D') && !state.vfox()) {
                 actions.runDoctor();
                 return EventResult.HANDLED;
             }
@@ -264,7 +367,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 return EventResult.HANDLED;
             }
             if (key.isChar('P')) {
-                if (state.offline()) {
+                if (state.vfox()) {
+                    // 'P' is free in vfox mode (upgrade-all has no vfox equivalent) — repurposed
+                    // for standalone plugin registration instead.
+                    addPluginModal.open();
+                } else if (state.offline()) {
                     state.addLog(LogLevel.INFO, "Offline mode — can't check for outdated tools");
                 } else if (state.outdated().isEmpty()) {
                     state.addLog(LogLevel.INFO, "All tools are up to date");
@@ -279,11 +386,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 actions.cancelAll();
                 return EventResult.HANDLED;
             }
-            if (key.isChar('X')) {
+            if (key.isChar('X') && !state.vfox()) {
                 confirm("Prune unused/old tool versions?", actions::prune);
                 return EventResult.HANDLED;
             }
-            if (key.isChar('1')) {
+            if (key.isChar('1') && !state.vfox()) {
                 focus(PanelIds.STATUS);
                 return EventResult.HANDLED;
             }
@@ -291,11 +398,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 focus(PanelIds.TOOLS);
                 return EventResult.HANDLED;
             }
-            if (key.isChar('3')) {
+            if (key.isChar('3') && !state.vfox()) {
                 focus(PanelIds.ENV);
                 return EventResult.HANDLED;
             }
-            if (key.isChar('4')) {
+            if (key.isChar('4') && !state.vfox()) {
                 focus(PanelIds.TASKS);
                 return EventResult.HANDLED;
             }
@@ -338,6 +445,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         if (taskArgsModal.isOpen()) {
             return stack(body, taskArgsModal.build());
         }
+        if (addPluginModal.isOpen()) {
+            return stack(body, addPluginModal.build());
+        }
         return body;
     }
 
@@ -350,6 +460,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     private Column buildSidebar() {
+        // Status/Env/Tasks are entirely mise-derived (doctor/trust/env/tasks) with no vfox
+        // equivalent, so vfox mode shows Tools alone rather than three panels of nothing.
+        if (state.vfox()) {
+            return column(toolsPanel.build().constraint(fill()));
+        }
         if (terminalHeight() >= ACCORDION_HEIGHT) {
             return column(
                     statusPanel.build().constraint(length(STATUS_HEIGHT)),
@@ -393,6 +508,15 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     private Element buildHeader() {
+        if (state.vfox()) {
+            // No `vfox doctor` equivalent exists — nothing to query, so this is a static badge.
+            return row(
+                    text(" tambo ").bold().cyan(),
+                    text("— a TUI for vfox").dim(),
+                    spacer(),
+                    text("vfox").fg(Color.GREEN)
+            );
+        }
         // Both fields here come from `mise doctor`, which loads lazily; until it
         // answers the header stays neutral rather than announcing "not activated".
         actions.ensureDoctor();
@@ -421,6 +545,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
             hints = confirmModal.footerHint();
         } else if (taskArgsModal.isOpen()) {
             hints = taskArgsModal.footerHint();
+        } else if (addPluginModal.isOpen()) {
+            hints = addPluginModal.footerHint();
         } else if (registryModal.isOpen()) {
             hints = registryModal.footerHint();
         } else if (configEditor.isOpen()) {
@@ -428,11 +554,13 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         } else {
             String focus = focusedId();
             hints = switch (focus) {
-                case PanelIds.TOOLS -> "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   g global   p upgrade   c cancel   C all";
+                case PanelIds.TOOLS -> state.vfox()
+                        ? "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   R remove   g global   c cancel   C all"
+                        : "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   g global   p upgrade   c cancel   C all";
                 case PanelIds.TASKS -> "↑/↓ select   / filter   ←/→ pan   enter run   : args   . re-run   c cancel   C all";
                 case PanelIds.ENV -> "↑/↓ scroll   / filter   ←/→ pan   y copy value";
                 case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
-                case null, default -> "1-5 jump   tab cycle";
+                case null, default -> state.vfox() ? "2,5 jump   tab cycle" : "1-5 jump   tab cycle";
             };
         }
         return row(
@@ -448,6 +576,9 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
      * that cannot succeed on this install.
      */
     private String globalKeyHints() {
+        if (state.vfox()) {
+            return "a add   e edit   A activate   P add plugin   U update   r refresh   ? help   q quit ";
+        }
         String update = state.selfUpdateDisabled() ? "" : "U update   ";
         return "a add   e edit   A activate   T trust   D doctor   " + update
                 + "P upgrade-all   X prune   r refresh   ? help   q quit ";

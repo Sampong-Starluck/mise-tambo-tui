@@ -14,6 +14,7 @@ public final class PanelIds {
     public static final String MODAL_INPUT = "registry-modal-input";
     public static final String CONFIG_EDITOR = "config-editor";
     public static final String TASK_ARGS_INPUT = "task-args-input";
+    public static final String ADD_PLUGIN_INPUT = "add-plugin-input";
 
     private PanelIds() {
     }
