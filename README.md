@@ -1,4 +1,4 @@
-# tambo — a TUI for mise and vfox
+# a TUI for mise and vfox
 
 A lazygit-style terminal UI for polyglot runtime version managers. It gives you a keyboard-driven, multi-panel workspace for inspecting tools, managing versions, running tasks, and editing configuration without manually composing long CLI commands.
 
