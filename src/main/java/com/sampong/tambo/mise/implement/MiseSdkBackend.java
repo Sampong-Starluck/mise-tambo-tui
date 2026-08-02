@@ -5,12 +5,12 @@ import java.util.function.Consumer;
 
 import org.springframework.stereotype.Service;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
-import com.sampong.tambo.sdk.SdkVersionBackend;
+import com.sampong.tambo._common.service.SdkVersionBackend;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;

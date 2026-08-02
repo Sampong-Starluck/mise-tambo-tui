@@ -1,4 +1,4 @@
-package com.sampong.tambo.mise;
+package com.sampong.tambo._common.base;
 
 import java.util.HashSet;
 import java.util.Map;

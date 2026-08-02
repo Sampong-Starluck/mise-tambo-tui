@@ -2,7 +2,7 @@ package com.sampong.tambo.mise;
 
 import java.util.function.Consumer;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 
 /**
  * Maintenance of the mise installation itself: the full {@code mise doctor}

@@ -6,11 +6,11 @@ import java.util.List;
 
 import org.springframework.stereotype.Service;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo.mise.ShellActivationService;
-import com.sampong.tambo.shell.Shell;
-import com.sampong.tambo.shell.ShellDetector;
-import com.sampong.tambo.shell.ShellFileWriter;
+import com.sampong.tambo._common.model.Shell;
+import com.sampong.tambo._common.util.ShellDetector;
+import com.sampong.tambo._common.util.ShellFileWriter;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;

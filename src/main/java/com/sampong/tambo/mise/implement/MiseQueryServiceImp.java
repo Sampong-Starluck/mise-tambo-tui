@@ -16,7 +16,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.model.DoctorInfo;

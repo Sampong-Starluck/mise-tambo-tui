@@ -5,9 +5,9 @@ import java.nio.file.Path;
 import org.springframework.stereotype.Service;
 
 import com.sampong.tambo.mise.ShellActivationService;
-import com.sampong.tambo.shell.Shell;
-import com.sampong.tambo.shell.ShellDetector;
-import com.sampong.tambo.shell.ShellFileWriter;
+import com.sampong.tambo._common.model.Shell;
+import com.sampong.tambo._common.util.ShellDetector;
+import com.sampong.tambo._common.util.ShellFileWriter;
 
 /**
  * Enables {@code mise activate} for future shells by writing the activation line

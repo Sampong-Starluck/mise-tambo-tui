@@ -1,9 +1,9 @@
-package com.sampong.tambo.sdk;
+package com.sampong.tambo._common.service;
 
 import java.util.List;
 import java.util.function.Consumer;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo.mise.model.RegistryEntry;
 import com.sampong.tambo.mise.model.ToolVersion;
 

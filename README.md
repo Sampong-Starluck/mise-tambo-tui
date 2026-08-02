@@ -222,18 +222,22 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 ├── pom.xml
 ├── README.md
 └── src/main/java/com/sampong/tambo/
-    ├── TamboApplication.java
-    ├── cli/
-    │   ├── CliProcessRunner.java             (spawns/streams version-manager subprocesses)
-    │   └── CliResult.java                    (exit code + stdout/stderr, shared by mise and vfox)
-    ├── sdk/
-    │   └── SdkVersionBackend.java            (install/use/list/registry contract mise and vfox both implement)
-    ├── shell/
-    │   ├── Shell.java                        (supported shells)
-    │   ├── ShellDetector.java                (detects the running shell from the process tree)
-    │   └── ShellFileWriter.java              (idempotent shell-profile activation-line writer)
+    ├── TamboApplication.java                 (single entry point: main() + native-image bootstrap hints)
+    ├── config/
+    │   └── AppConfig.java                    (Spring @Bean wiring: ObjectMapper, executor, app runner)
+    ├── _common/                               (everything shared by both backends; tui/ is excluded on purpose, see below)
+    │   ├── model/
+    │   │   ├── CliResult.java                (exit code + stdout/stderr, shared by mise and vfox)
+    │   │   └── Shell.java                    (supported shells)
+    │   ├── service/
+    │   │   └── SdkVersionBackend.java        (install/use/list/registry contract mise and vfox both implement)
+    │   ├── base/
+    │   │   ├── CliProcessRunner.java         (spawns/streams version-manager subprocesses)
+    │   │   └── CancelRegistry.java           (tracks and cancels running operations, shared by mise and vfox)
+    │   └── util/
+    │       ├── ShellDetector.java            (detects the running shell from the process tree)
+    │       └── ShellFileWriter.java          (idempotent shell-profile activation-line writer)
     ├── mise/
-    │   ├── CancelRegistry.java               (tracks and cancels running operations)
     │   ├── MiseCli.java
     │   ├── MiseMaintenanceService.java
     │   ├── MiseQueryService.java
@@ -273,6 +277,16 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 ```
 
 ## Architecture notes
+
+Layering follows a plain Spring Boot MVC-style split rather than the panel-only view it might look like at a glance. The organizing question for top-level packages is "does this depend on a specific backend?":
+
+- `_common/` — anything used by **both** `mise/` and `vfox/` lives here, so a package path alone answers whether code is backend-specific:
+  - `model/` — shared value types (`CliResult`, `Shell`); backend-specific data (`mise/model/`) stays with its own backend
+  - `service/` — the cross-backend contract (`SdkVersionBackend`); the mise-only service interfaces stay in `mise/` since vfox has no equivalent for them
+  - `base/` — foundational infrastructure both backends build on (`CliProcessRunner`, `CancelRegistry`)
+  - `util/` — stateless helpers with no Spring wiring of their own (`ShellDetector`, `ShellFileWriter`)
+- `tui/` is backend-agnostic too but deliberately **not** under `_common/` — it's the app's UI layer, not shared backend plumbing, so it stays its own top-level package. Within it, panels/modals (`components/`), the action layer (`features/MiseActions`), and shared UI state (`state/`) stay together rather than splitting into view/controller packages — an immediate-mode TUI renders and handles input in the same `build()` pass, so that split would be artificial here rather than a real separation of concerns
+- `config/` — the app's Spring `@Bean` wiring (`AppConfig`), kept out of `TamboApplication` so that class is just the entry point; it configures the whole app rather than a specific backend, so it stays outside `_common/` too
 
 ### Core components
 

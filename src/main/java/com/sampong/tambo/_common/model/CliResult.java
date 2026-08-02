@@ -1,4 +1,4 @@
-package com.sampong.tambo.cli;
+package com.sampong.tambo._common.model;
 
 /** The result of running a version-manager CLI subcommand (mise, vfox, ...). */
 public record CliResult(int exitCode, String stdout, String stderr) {

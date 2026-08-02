@@ -2,7 +2,7 @@ package com.sampong.tambo.mise;
 
 import java.util.function.Consumer;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 
 /**
  * Mutating tool operations: install, uninstall, {@code use} (write into

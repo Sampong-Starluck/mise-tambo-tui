@@ -13,8 +13,8 @@ import java.util.stream.Collectors;
 
 import org.springframework.core.task.AsyncTaskExecutor;
 
-import com.sampong.tambo.cli.CliResult;
-import com.sampong.tambo.mise.CancelRegistry;
+import com.sampong.tambo._common.model.CliResult;
+import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
@@ -22,7 +22,7 @@ import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.model.MiseTask;
 import com.sampong.tambo.mise.model.OutdatedTool;
 import com.sampong.tambo.mise.model.ToolVersion;
-import com.sampong.tambo.sdk.SdkVersionBackend;
+import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;

@@ -1,4 +1,4 @@
-package com.sampong.tambo.cli;
+package com.sampong.tambo._common.base;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
 
 import org.springframework.core.task.AsyncTaskExecutor;
 
-import com.sampong.tambo.mise.CancelRegistry;
+import com.sampong.tambo._common.model.CliResult;
 
 import org.jspecify.annotations.Nullable;
 

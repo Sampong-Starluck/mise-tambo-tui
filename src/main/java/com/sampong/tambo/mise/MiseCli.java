@@ -9,8 +9,9 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
-import com.sampong.tambo.cli.CliProcessRunner;
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.base.CancelRegistry;
+import com.sampong.tambo._common.base.CliProcessRunner;
+import com.sampong.tambo._common.model.CliResult;
 
 import org.jspecify.annotations.Nullable;
 

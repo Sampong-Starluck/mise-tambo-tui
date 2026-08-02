@@ -1,4 +1,4 @@
-/** Application entry point and Spring Boot bootstrap wiring. */
+/** Application entry point ({@code TamboApplication}) and native-image bootstrap hints. */
 @NullMarked
 package com.sampong.tambo;
 

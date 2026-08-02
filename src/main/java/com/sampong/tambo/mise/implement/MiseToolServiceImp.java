@@ -7,7 +7,7 @@ import java.util.function.Consumer;
 
 import org.springframework.stereotype.Service;
 
-import com.sampong.tambo.cli.CliResult;
+import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo.mise.MiseCli;
 import com.sampong.tambo.mise.MiseToolService;
 

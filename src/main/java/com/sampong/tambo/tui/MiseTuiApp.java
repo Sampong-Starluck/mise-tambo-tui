@@ -34,14 +34,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-import com.sampong.tambo.mise.CancelRegistry;
+import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.implement.MiseSdkBackend;
 import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
-import com.sampong.tambo.sdk.SdkVersionBackend;
+import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.vfox.VfoxShellActivationServiceImp;
 import com.sampong.tambo.tui.components.AddPluginModal;
