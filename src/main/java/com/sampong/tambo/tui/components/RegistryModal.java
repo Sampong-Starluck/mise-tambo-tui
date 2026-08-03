@@ -9,7 +9,10 @@ import static dev.tamboui.toolkit.Toolkit.textInput;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.IntFunction;
+import java.util.stream.Collectors;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
@@ -34,13 +37,14 @@ import lombok.RequiredArgsConstructor;
  * The "Add SDK" modal: step 1 fuzzy-finds a tool by typing into a real input box, step 2
  * fuzzy-finds the version the same way. Esc steps back.
  * <p>
- * Step 1 browses the full catalog for both backends — {@code mise registry} or {@code vfox
- * available} — so a plugin shows up here whether or not it was registered beforehand via the
- * separate {@code P} "add plugin" flow; {@link com.sampong.tambo.vfox.VfoxSdkBackend#install}
- * re-runs {@code vfox add} itself before installing, so picking an unregistered plugin here
- * just works. Behavior still forks on step 2: mise's Enter runs {@code mise use} (install +
- * pin; Ctrl+G toggles local/global), vfox's Enter only runs {@code vfox install} — already-
- * installed versions are marked, and pinning stays a separate step in the Tools panel.
+ * Step 1's source differs by backend: mise browses the full {@code mise registry} catalog,
+ * since mise tools are always added implicitly through this flow. vfox instead lists only
+ * plugins already added (i.e. present in {@code vfox list}) — browsing the full catalog to
+ * register a new plugin is the separate {@code P} "add plugin" flow's job; this modal is
+ * "install another version of a plugin you already have". Behavior also forks on step 2:
+ * mise's Enter runs {@code mise use} (install + pin; Ctrl+G toggles local/global), vfox's
+ * Enter only runs {@code vfox install} — already-installed versions are marked, and pinning
+ * stays a separate step in the Tools panel.
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
@@ -132,8 +136,9 @@ public final class RegistryModal {
                 ? (vfox ? "enter choose plugin   esc close" : "enter choose SDK   esc close")
                 : (vfox ? "enter install   esc back" : "enter install   ctrl+g toggle local/global   esc back")).dim());
 
-        String title = (vfox ? "Add SDK — vfox catalog (" : "Add SDK — registry (")
-                + ctx.state().registry().size() + ")";
+        String title = vfox
+                ? "Add SDK — added plugins (" + addedVfoxPlugins().size() + ")"
+                : "Add SDK — registry (" + ctx.state().registry().size() + ")";
         return dialog(title, content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
     }
@@ -143,15 +148,25 @@ public final class RegistryModal {
         List<RegistryEntry> matches = fuzzyTools(query);
         index = Ui.clamp(index, matches.size());
 
-        content.add(searchInputRow("Search SDK", "type to fuzzy find, e.g. \"node\" or \"jdk\""));
+        content.add(searchInputRow("Search SDK", vfox
+                ? "type to fuzzy find an added plugin"
+                : "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
-        if (ctx.state().registry().isEmpty()) {
+        if (vfox) {
+            if (addedVfoxPlugins().isEmpty()) {
+                content.add(text("No plugins added yet — press P to add one from the catalog").dim());
+            } else if (matches.isEmpty()) {
+                content.add(text("No plugin matches \"" + query + "\"").dim());
+            } else {
+                addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
+            }
+        } else if (ctx.state().registry().isEmpty()) {
             Lazy<List<RegistryEntry>> registry = ctx.state().registryLazy();
             content.add(text(registry.everLoaded() || registry.failed()
-                    ? (vfox ? "Catalog unavailable" : "Registry unavailable")
-                    : (vfox ? "Loading catalog…" : "Loading registry…")).dim());
+                    ? "Registry unavailable"
+                    : "Loading registry…").dim());
         } else if (matches.isEmpty()) {
-            content.add(text((vfox ? "No plugin matches \"" : "No SDK matches \"") + query + "\"").dim());
+            content.add(text("No SDK matches \"" + query + "\"").dim());
         } else {
             addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
         }
@@ -244,12 +259,34 @@ public final class RegistryModal {
     }
 
     private List<RegistryEntry> fuzzyTools(String query) {
-        // Both backends browse the full catalog now. Match on the short name first, then
-        // fall back to description + backends so typing a backend (e.g. "cargo", "npm",
-        // "ubi") narrows the mise list too; vfox entries carry no backends (see
-        // VfoxSdkBackend#listAvailable), so backendSummary() is just a harmless "-" there.
-        return Fuzzy.filter(query, ctx.state().registry(), RegistryEntry::shortName,
+        // mise browses the full catalog; vfox is scoped to plugins already added (see
+        // addedVfoxPlugins) — the full vfox catalog lives in the separate P "add plugin" flow.
+        // Match on the short name first, then fall back to description + backends so typing a
+        // backend (e.g. "cargo", "npm", "ubi") narrows the mise list too; vfox entries carry no
+        // backends (see VfoxSdkBackend#listAvailable), so backendSummary() is just a harmless
+        // "-" there.
+        List<RegistryEntry> source = ctx.state().vfox() ? addedVfoxPlugins() : ctx.state().registry();
+        return Fuzzy.filter(query, source, RegistryEntry::shortName,
                 e -> Ui.nullToDash(e.description()) + " " + e.backendSummary());
+    }
+
+    /**
+     * vfox only: the plugins the user already has, derived from {@code vfox list} (i.e.
+     * {@link com.sampong.tambo.tui.state.UiState#tools()}) rather than the full catalog.
+     * Enriches with the catalog's description when a match is available (registry may not
+     * have loaded yet, or the plugin may not be in the official catalog at all — either way
+     * that's cosmetic only, so a bare entry is a fine fallback).
+     */
+    private List<RegistryEntry> addedVfoxPlugins() {
+        Map<String, RegistryEntry> byName = ctx.state().registry().stream()
+                .collect(Collectors.toMap(e -> e.shortName().toLowerCase(Locale.ROOT), e -> e, (a, b) -> a));
+        return ctx.state().tools().stream()
+                .map(ToolVersion::tool)
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .map(name -> byName.getOrDefault(name.toLowerCase(Locale.ROOT),
+                        new RegistryEntry(name, null, null, null)))
+                .toList();
     }
 
     // ==================== Key handling ====================

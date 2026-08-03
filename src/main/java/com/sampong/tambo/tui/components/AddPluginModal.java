@@ -30,17 +30,20 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * {@code P} — registers a vfox plugin standalone, without installing any version. Fuzzy-finds
- * across the full {@code vfox available} catalog the same way the "Add SDK" modal does; Enter
- * adds whichever entry is highlighted. Since the query is matched as a subsequence, anything
- * longer than every candidate name necessarily fails to match — so typing the advanced
+ * Registers a vfox plugin standalone, without installing any version. Two entry points share
+ * this one modal: {@code p} opens it unconditionally for the everyday flow, {@code P} opens it
+ * only once {@code advancedFeatures} is on ({@code V} to toggle, {@code --advanced-features} to
+ * start with it on) — the modal's own behavior doesn't otherwise depend on which key opened it.
+ * Fuzzy-finds across the
+ * full {@code vfox available} catalog the same way the "Add SDK" modal does; Enter adds
+ * whichever entry is highlighted. Since the query is matched as a subsequence, anything longer
+ * than every candidate name necessarily fails to match — so typing the advanced
  * {@code <name> --alias <x> --source <url>} syntax (longer than any bare plugin name) always
  * falls through to submitting the raw typed text instead of a highlighted match. That fallback
- * is also where the syntax is gated: it only runs when {@code advancedFeatures} is on ({@code
- * V} to toggle, {@code --advanced-features} to start with it on) — otherwise a catalog miss
- * just logs a nudge instead of submitting anything. vfox-only — mise has no equivalent in this
- * app (mise tools are always added implicitly via the registry "Add SDK" flow instead). Esc
- * cancels.
+ * is also where the syntax is gated: it only runs when {@code advancedFeatures} is on —
+ * otherwise a catalog miss just logs a nudge instead of submitting anything. vfox-only — mise
+ * has no equivalent in this app (mise tools are always added implicitly via the registry "Add
+ * SDK" flow instead). Esc cancels.
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */

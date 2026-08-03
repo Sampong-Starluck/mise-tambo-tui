@@ -34,8 +34,8 @@ In vfox mode, only the **Tools** and **Log** panels are shown — vfox has no ta
 
 ### Extra UI flows
 
-- `RegistryModal` — the `a` "Add SDK" flow: fuzzy-find a tool then a version. Both backends browse the full catalog (`mise registry` or `vfox available`) — for vfox, picking an unregistered plugin re-runs `vfox add` automatically before installing, so nothing needs to be added via `P` first. vfox's Enter only installs a version (it doesn't pin/use it — that stays a separate step)
-- `AddPluginModal` — vfox only (`P`): fuzzy-finds and registers a plugin standalone via `vfox add`, without installing a version; the raw `--alias`/`--source` syntax is `[advanced]`
+- `RegistryModal` — the `a` "Add SDK" flow: fuzzy-find a tool then a version. mise browses the full `mise registry` catalog; vfox is scoped to plugins you've already added (from `vfox list`) — install a new plugin from the full catalog with `p` first. vfox's Enter only installs a version (it doesn't pin/use it — that stays a separate step)
+- `AddPluginModal` — vfox only: fuzzy-finds and registers a plugin standalone via `vfox add`, without installing a version. `p` opens it unconditionally for the everyday catalog browse; `P` opens the same modal but only once advanced features (`V`) are on, for typing the raw `--alias`/`--source` syntax directly
 - `ConfigEditorModal` — in-app editor for the project config (`mise.toml` / `.vfox.toml`) and, for mise, the global `config.toml`
 - `TaskArgsModal` — mise only: run the selected task with extra arguments
 - `ConfirmModal` — confirmation prompts for destructive actions (uninstall, prune, upgrade-all, …)
@@ -160,6 +160,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 
 - `?` — open help overlay
 - `a` — mise: fuzzy-find and install an SDK from the full registry. vfox: install another version of an already-added plugin
+- `p` — vfox only: fuzzy-find and register a new plugin from the full catalog (`vfox add`)
 - `A` — activate shell integration for the active backend
 - `e` — edit the project config (`mise.toml` / `.vfox.toml`)
 - `V` — toggle the **Advanced** panel and unlock the `[advanced]` keys below (see [Advanced features](#advanced-features))
@@ -167,7 +168,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `T` *[advanced]* — trust this project's mise config (mise only)
 - `D` *[advanced]* — run `mise doctor` (mise only)
 - `U` *[advanced]* — self-update: `mise self-update` or `vfox upgrade`
-- `P` — mise: upgrade all outdated tools (asks to confirm). vfox: fuzzy-find and add a plugin from the catalog (`vfox add`); the raw `--alias`/`--source` syntax is *[advanced]*
+- `P` — mise: upgrade all outdated tools (asks to confirm). vfox *[advanced]*: register a plugin by explicit name with `--alias`/`--source` (opens the same modal as `p`, but only once advanced features are on)
 - `X` *[advanced]* — prune unused/old tool versions (mise only)
 - `r` — refresh the current UI state
 - `C` — cancel every running operation, from any panel
@@ -399,6 +400,18 @@ Known issue in the `dev.tamboui:tamboui-panama-backend` dependency, not in this 
 Only reproduces in the **native image** build (`target/mise-tambo`); it has not been observed running on the plain JVM (`java -jar target/mise-tambo-0.0.2.jar`). Triggered by resizing the terminal (e.g. growing its height) while the app is running.
 
 No workaround shipped yet — tracked as a known crash pending a fix upstream in `tamboui-panama-backend` (the signal handler needs to avoid calling back into Java from raw signal-handler context entirely, e.g. by dispatching through `sun.misc.Signal`/a dedicated signal-dispatch thread instead of a Panama upcall).
+
+### `BackendException: All backend providers failed to create a backend` / `panama: Failed to get input console mode` (Windows)
+
+Happens when launched from **Git Bash (MinTTY)**: MinTTY emulates a terminal over a pipe rather than allocating a real Win32 console, so the Panama backend's `GetConsoleMode()` probe on stdin fails and it refuses to start (unlike `WindowsConsoleMouse`'s own QuickEdit toggle, which treats the same failure as a soft no-op).
+
+- Run from **Windows Terminal, PowerShell, or cmd.exe** instead — these allocate a real console.
+- If you must stay in Git Bash, prefix the launch with `winpty` (ships with Git for Windows, or `pacman -S winpty` in MSYS2):
+  ```bash
+  winpty java -jar target/mise-tambo-0.0.2.jar
+  # or
+  winpty ./mvnw spring-boot:run
+  ```
 
 ## License
 

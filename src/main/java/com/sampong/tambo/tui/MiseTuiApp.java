@@ -399,11 +399,26 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 }
                 return EventResult.HANDLED;
             }
+            if (key.isChar('p') && state.vfox()) {
+                // vfox-only: 'p' is free (mise's ToolsPanel binds it to per-tool upgrade
+                // instead) — used here for the everyday "add plugin" flow, fuzzy-finding
+                // the catalog. The [advanced] --alias/--source raw syntax stays behind 'P'.
+                if (state.offline()) {
+                    state.addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
+                } else {
+                    addPluginModal.open();
+                }
+                return EventResult.HANDLED;
+            }
             if (key.isChar('P')) {
                 if (state.vfox()) {
-                    // 'P' is free in vfox mode (upgrade-all has no vfox equivalent) — repurposed
-                    // for standalone plugin registration instead.
-                    addPluginModal.open();
+                    if (requireAdvanced("Add plugin with --alias/--source")) {
+                        if (state.offline()) {
+                            state.addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
+                        } else {
+                            addPluginModal.open();
+                        }
+                    }
                 } else if (state.offline()) {
                     state.addLog(LogLevel.INFO, "Offline mode — can't check for outdated tools");
                 } else if (state.outdated().isEmpty()) {
@@ -620,7 +635,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
      */
     private String globalKeyHints() {
         if (state.vfox()) {
-            return "a add   e edit   A activate   P add plugin   U update   r refresh   ? help   q quit ";
+            return "a add   p add plugin   e edit   A activate   P alias/source   U update   r refresh   ? help   q quit ";
         }
         String update = state.selfUpdateDisabled() ? "" : "U update   ";
         return "a add   e edit   A activate   T trust   D doctor   " + update

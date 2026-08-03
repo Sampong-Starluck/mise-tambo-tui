@@ -61,9 +61,12 @@ public final class HelpOverlay {
                 helpLine("Left/Right, h/l", "Pan the focused panel / command log horizontally"),
                 helpLine("End", "Log: resume following the newest entry"),
                 helpLine("Mouse", "Click to focus a panel, wheel to scroll"),
-                helpLine("a", vfox ? "Add SDK — fuzzy-find the vfox catalog and install a version"
+                helpLine("a", vfox ? "Add SDK — install another version of a plugin you already have"
                         : "Add SDK — fuzzy-find registry modal"),
                 helpLine("e", "Edit project " + configFile + " in-app (Ctrl+S save, Esc discard)")));
+        if (vfox) {
+            lines.add(helpLine("p", "Add plugin — fuzzy-find the vfox catalog and register it"));
+        }
 
         lines.add(helpLine("V", "Toggle the Advanced panel — reveals [advanced] keys below"));
         if (!vfox) {
@@ -71,9 +74,6 @@ public final class HelpOverlay {
         }
         lines.add(helpLine("A", "Activate " + tool
                 + " in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"));
-        if (vfox) {
-            lines.add(helpLine("P", "Add a vfox plugin — fuzzy-find the catalog, or [advanced] type name [--alias/--source]"));
-        }
         if (!vfox) {
             lines.add(helpLine("T", "[advanced] Trust this project's mise config (mise trust)"));
             lines.add(helpLine("D", "[advanced] Run mise doctor — full report in the log"));
@@ -83,6 +83,7 @@ public final class HelpOverlay {
             lines.add(helpLine("X", "[advanced] Prune unused/old tool versions (asks to confirm)"));
         } else {
             lines.add(helpLine("U", "[advanced] vfox upgrade — update vfox itself to the latest version"));
+            lines.add(helpLine("P", "[advanced] Add plugin with explicit name [--alias/--source]"));
         }
         lines.add(helpLine("i", "Install selected tool"));
         lines.add(helpLine("u", "Apply selected tool to project " + configFile));
