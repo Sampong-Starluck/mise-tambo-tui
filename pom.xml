@@ -43,7 +43,17 @@
             <version>${tamboui.version}</version>
         </dependency>
 
-        <!-- Panama (FFM) backend — auto-discovered via ServiceLoader -->
+        <!-- Both TUI rendering backends are on the classpath; TamboConfig picks one via
+             the `tamboui.backend` system property (see TamboConfig#applyBackendPreference),
+             defaulting to jline3. The `B` key (Advanced panel) lets the user switch, taking
+             effect on the next restart. jline3 is the default: the Panama backend's SIGWINCH
+             handling crashes fatally under GraalVM Native Image (see README troubleshooting),
+             and fails to start under Windows Git Bash/MinTTY. -->
+        <dependency>
+            <groupId>dev.tamboui</groupId>
+            <artifactId>tamboui-jline3-backend</artifactId>
+            <version>${tamboui.version}</version>
+        </dependency>
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-panama-backend</artifactId>
@@ -137,10 +147,17 @@
                 <artifactId>native-maven-plugin</artifactId>
                 <configuration>
                     <buildArgs>
-                        <!-- TamboUI's Panama backend uses the FFM API for terminal I/O -->
+                        <!-- Needed regardless of which TUI backend ends up selected at runtime:
+                             the Panama backend uses the FFM API directly; JLine's native terminal
+                             support loads a bundled JNI library via System.load (a restricted
+                             method under the same native-access gate); and this app's own
+                             WindowsConsoleMouse (tui/features/) makes raw kernel32 FFM downcalls
+                             to disable Windows console QuickEdit mode, independent of either. -->
                         <buildArg>--enable-native-access=ALL-UNNAMED</buildArg>
-                        <!-- WindowsTerminal allocates with Arena.ofShared(), which native
-                             image only supports when this (experimental) flag is on -->
+                        <!-- WindowsTerminal (Panama backend) allocates with Arena.ofShared(),
+                             which native image only supports when this (experimental) flag is
+                             on. Both backends are always on the classpath (see pom dependencies
+                             above), so this is needed even when jline3 is the active default. -->
                         <buildArg>-H:+UnlockExperimentalVMOptions</buildArg>
                         <buildArg>-H:+SharedArenaSupport</buildArg>
                         <!-- Deliberately omitting the future-defaults flag GraalVM suggests:
@@ -181,8 +198,7 @@
                         <configuration>
                             <!-- combine.children="append": Maven's default plugin-config merge
                                  REPLACES the base buildArgs list rather than adding to it, which
-                                 would silently drop the native-access/shared-arena flags this
-                                 build needs just to succeed. -->
+                                 would silently drop the base profile's -march/-R:MaxHeapSize flags. -->
                             <buildArgs combine.children="append">
                                 <buildArg>--pgo-instrument</buildArg>
                                 <buildArg>-R:ProfilesDumpFile=${project.basedir}/default.iprof</buildArg>
@@ -190,7 +206,8 @@
                                      instrumentation also injects counters into the FFM/Panama
                                      upcall stub TamboUI generates for terminal I/O, which
                                      crashes the Graal compiler backend (register-allocator
-                                     assertion in the generated stub). -->
+                                     assertion in the generated stub) if the Panama backend is
+                                     the one active when this profile build runs. -->
                                 <buildArg>-H:ProfilingPackagePrefixes=com.sampong.tambo</buildArg>
                             </buildArgs>
                         </configuration>

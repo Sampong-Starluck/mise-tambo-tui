@@ -85,6 +85,8 @@ public final class HelpOverlay {
             lines.add(helpLine("U", "[advanced] vfox upgrade — update vfox itself to the latest version"));
             lines.add(helpLine("P", "[advanced] Add plugin with explicit name [--alias/--source]"));
         }
+        lines.add(helpLine("B", "[advanced] Switch UI backend jline3/panama (now: " + ctx.uiBackend()
+                + ") — takes effect on restart"));
         lines.add(helpLine("i", "Install selected tool"));
         lines.add(helpLine("u", "Apply selected tool to project " + configFile));
         lines.add(helpLine("x", "[advanced] Uninstall selected tool (asks to confirm)"));

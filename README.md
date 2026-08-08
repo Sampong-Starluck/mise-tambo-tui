@@ -55,18 +55,29 @@ In vfox mode, only the **Tools** and **Log** panels are shown — vfox has no ta
 - `mise` (recommended) or the tools above activated in your shell
 - Linux, macOS, or Windows with appropriate build tools
 
-## Choosing a backend: mise vs vfox
+## Choosing a version-manager backend: mise vs vfox
 
-tambo picks a backend once at startup and uses it for the whole session:
+tambo picks a version-manager backend once at startup and uses it for the whole session:
 
 1. `--backend=mise` or `--backend=vfox` on the command line, if given, wins outright.
 2. Otherwise it looks for `mise.toml` or `.vfox.toml` in the current directory and uses whichever it finds.
-3. If neither exists, it asks once on the console (`Which version manager should tambo use here? [mise/vfox]`, default mise) and creates an empty config file for the chosen backend so the choice sticks next time.
+3. If neither exists, it shows a picker in the TUI itself on first launch — `m`/Enter for mise (the default), `v` for vfox — and creates an empty config file for the chosen backend so the choice sticks next time. This runs inside the TUI's own input loop rather than a raw console prompt before the TUI starts, so it never competes with the TUI backend for stdin.
 
 Other flags:
 
 - `--offline` — skips anything that needs the network (install, use, self-update, Add SDK); shows only already-installed tools.
 - `--advanced-features` — starts the session with the [Advanced features](#advanced-features) panel already unlocked, same as pressing `V`.
+
+## Choosing a UI backend: jline3 vs Panama
+
+This is unrelated to the mise/vfox choice above — it's which TamboUI library renders the terminal itself. Both `tamboui-jline3-backend` and `tamboui-panama-backend` ship on tambo's classpath (see [pom.xml](pom.xml)); only one is active per run, picked once at process startup and unable to change mid-session:
+
+1. The `tamboui.backend` system property or `TAMBOUI_BACKEND` environment variable, if either is set externally, wins outright.
+2. Otherwise, the persisted `ui.backend` in `tambo.properties` is used — `jline3` if unset.
+
+Press `B` in the [Advanced features](#advanced-features) panel to switch; it persists the choice to `tambo.properties` and logs a reminder that it takes effect on the next restart, not the running session.
+
+**jline3 is the default and the recommended choice.** The Panama (FFM) backend has two known issues: a fatal, unrecoverable native-image crash on terminal resize (`SIGWINCH` interrupting an FFM upcall mid-safepoint), and a startup failure under Windows Git Bash/MinTTY (`GetConsoleMode()` probe failing on its emulated pipe-terminal). Switch to it only if you have a specific reason to.
 
 ## Quick start
 
@@ -168,6 +179,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `T` *[advanced]* — trust this project's mise config (mise only)
 - `D` *[advanced]* — run `mise doctor` (mise only)
 - `U` *[advanced]* — self-update: `mise self-update` or `vfox upgrade`
+- `B` *[advanced]* — switch the UI backend between `jline3`/`panama`; takes effect on restart (see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama))
 - `P` — mise: upgrade all outdated tools (asks to confirm). vfox *[advanced]*: register a plugin by explicit name with `--alias`/`--source` (opens the same modal as `p`, but only once advanced features are on)
 - `X` *[advanced]* — prune unused/old tool versions (mise only)
 - `r` — refresh the current UI state
@@ -191,7 +203,8 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 ### Advanced features
 
 Maintenance and config-mutating actions — trust, global config editing, doctor, self-update, prune,
-uninstall, remove-from-config, and the Add Plugin `--alias`/`--source` syntax — are hidden by
+uninstall, remove-from-config, switching the UI backend, and the Add Plugin `--alias`/`--source`
+syntax — are hidden by
 default so a new session's keyboard surface starts small. Press `V` to reveal them: it flips
 `advancedFeatures` on for the session, unlocks the `[advanced]` keys above, and shows an
 **Advanced** panel in the left sidebar listing them for the active backend. Press `V` again to
@@ -360,6 +373,7 @@ tambo's own optional settings live in `<config-dir>/tambo.properties`, where `<c
 
 - `theme.*` — palette colours
 - `keys.*` — navigation binding overrides merged onto the standard set, e.g. `keys.moveUp = Up, k, w`
+- `ui.backend` — which TamboUI terminal backend to render with, `jline3` (default) or `panama`; see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama) below
 
 ## Development
 
@@ -393,25 +407,17 @@ tambo's own optional settings live in `<config-dir>/tambo.properties`, where `<c
 - use a terminal with reasonable width and height
 - the TUI supports a compact accordion layout for smaller terminals
 
+### `BackendException: All backend providers failed to create a backend`
+
+See [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama) — this means neither TamboUI terminal backend could open a terminal. With the default `jline3` backend, this usually means stdin/stdout isn't a real TTY (e.g. piped input, or a terminal emulator that doesn't allocate one); run tambo from an interactive terminal.
+
 ### Native binary crashes on terminal resize (`Fatal error: Must either be at a safepoint or in native mode`)
 
-Known issue in the `dev.tamboui:tamboui-panama-backend` dependency, not in this app's own code. On Linux/macOS, `UnixTerminal.onResize()` installs a `SIGWINCH` handler via a raw `sigaction()` call (Panama FFI) whose C-side handler is itself a Java upcall. Under GraalVM Native Image, a `SIGWINCH` can interrupt the main thread while it's already executing AOT-compiled Java; Substrate's upcall stub assumes the interrupted thread was cleanly in "native" state first, and when it isn't, `SafepointSlowpath.enterSlowPathTransitionFromNativeToNewStatus` aborts with this fatal error — an unrecoverable native crash that no try/catch in `tambo` can intercept.
+Only happens on the **Panama** UI backend (`B` to switch, see [above](#choosing-a-ui-backend-jline3-vs-panama)), not the default `jline3`. On Linux/macOS, Panama's `UnixTerminal.onResize()` installs a `SIGWINCH` handler via a raw `sigaction()` call whose C-side handler is itself a Java upcall. Under GraalVM Native Image, a `SIGWINCH` can interrupt the main thread while it's already executing AOT-compiled Java; Substrate's upcall stub assumes the interrupted thread was cleanly in "native" state first, and when it isn't, `SafepointSlowpath.enterSlowPathTransitionFromNativeToNewStatus` aborts with this fatal error — an unrecoverable native crash that no try/catch in `tambo` can intercept. Switch back to `jline3` to avoid it.
 
-Only reproduces in the **native image** build (`target/mise-tambo`); it has not been observed running on the plain JVM (`java -jar target/mise-tambo-0.0.2.jar`). Triggered by resizing the terminal (e.g. growing its height) while the app is running.
+### `panama: Failed to get input console mode` (Windows)
 
-No workaround shipped yet — tracked as a known crash pending a fix upstream in `tamboui-panama-backend` (the signal handler needs to avoid calling back into Java from raw signal-handler context entirely, e.g. by dispatching through `sun.misc.Signal`/a dedicated signal-dispatch thread instead of a Panama upcall).
-
-### `BackendException: All backend providers failed to create a backend` / `panama: Failed to get input console mode` (Windows)
-
-Happens when launched from **Git Bash (MinTTY)**: MinTTY emulates a terminal over a pipe rather than allocating a real Win32 console, so the Panama backend's `GetConsoleMode()` probe on stdin fails and it refuses to start (unlike `WindowsConsoleMouse`'s own QuickEdit toggle, which treats the same failure as a soft no-op).
-
-- Run from **Windows Terminal, PowerShell, or cmd.exe** instead — these allocate a real console.
-- If you must stay in Git Bash, prefix the launch with `winpty` (ships with Git for Windows, or `pacman -S winpty` in MSYS2):
-  ```bash
-  winpty java -jar target/mise-tambo-0.0.2.jar
-  # or
-  winpty ./mvnw spring-boot:run
-  ```
+Only happens on the **Panama** UI backend. Happens when launched from **Git Bash (MinTTY)**: MinTTY emulates a terminal over a pipe rather than allocating a real Win32 console, so Panama's `GetConsoleMode()` probe on stdin fails and it refuses to start. Switch to `jline3` (the default), or if you need Panama specifically: run from Windows Terminal, PowerShell, or `cmd.exe` instead, or prefix the launch with `winpty` (ships with Git for Windows, or `pacman -S winpty` in MSYS2).
 
 ## License
 

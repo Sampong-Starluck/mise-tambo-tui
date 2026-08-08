@@ -19,6 +19,9 @@ public interface UiContext {
     /** The active colour palette; panels read border/highlight colours from it. */
     Theme theme();
 
+    /** The configured TamboUI terminal backend ({@code jline3} or {@code panama}). */
+    String uiBackend();
+
     /** The id of the currently focused element, or null. */
     @Nullable String focusedId();
 

@@ -25,10 +25,8 @@ import dev.tamboui.tui.bindings.BindingSets;
 import dev.tamboui.tui.bindings.Bindings;
 import dev.tamboui.tui.event.KeyEvent;
 
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,6 +51,7 @@ import com.sampong.tambo.tui.components.EnvPanel;
 import com.sampong.tambo.tui.components.HelpOverlay;
 import com.sampong.tambo.tui.components.LogPanel;
 import com.sampong.tambo.tui.components.RegistryModal;
+import com.sampong.tambo.tui.components.SelectBackendModal;
 import com.sampong.tambo.tui.components.StatusPanel;
 import com.sampong.tambo.tui.components.TaskArgsModal;
 import com.sampong.tambo.tui.components.TasksPanel;
@@ -96,7 +95,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private static final int ADVANCED_HEIGHT = 9;
 
     private final UiState state;
-    private final MiseActions actions;
+    /**
+     * Not final: rebuilt by {@link #onBackendPicked} if {@link #selectBackendModal} resolves
+     * a first-run choice that differs from the provisional {@code mise} default it was first
+     * built with.
+     */
+    private MiseActions actions;
 
     private final StatusPanel statusPanel;
     private final ToolsPanel toolsPanel;
@@ -111,8 +115,23 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final TaskArgsModal taskArgsModal;
     private final AddPluginModal addPluginModal;
     private final HelpOverlay helpOverlay;
+    private final SelectBackendModal selectBackendModal;
 
     private final TamboConfig config;
+
+    // Stashed to rebuild MiseActions in onBackendPicked(); see buildActions().
+    private final MiseQueryService query;
+    private final MiseToolService tools;
+    private final MiseMaintenanceService maintenance;
+    private final MiseShellActivationServiceImp miseActivation;
+    private final VfoxShellActivationServiceImp vfoxActivation;
+    private final CancelRegistry cancelRegistry;
+    private final MiseSdkBackend miseSdkBackend;
+    private final VfoxSdkBackend vfoxSdkBackend;
+    private final AsyncTaskExecutor executor;
+
+    /** True until {@link #selectBackendModal} resolves a first-run choice; see {@link #onStart()}. */
+    private boolean pendingBackendChoice;
 
     public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
                       @NonNull MiseMaintenanceService maintenance,
@@ -122,16 +141,25 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                       @NonNull MiseSdkBackend miseSdkBackend, @NonNull VfoxSdkBackend vfoxSdkBackend,
                       @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
                       @NonNull ApplicationArguments arguments) {
+        this.query = query;
+        this.tools = tools;
+        this.maintenance = maintenance;
+        this.miseActivation = miseActivation;
+        this.vfoxActivation = vfoxActivation;
+        this.cancelRegistry = cancelRegistry;
+        this.miseSdkBackend = miseSdkBackend;
+        this.vfoxSdkBackend = vfoxSdkBackend;
+        this.executor = executor;
         this.config = config;
         this.state = new UiState();
         this.state.offline(arguments.containsOption("offline"));
         this.state.advancedFeatures(arguments.containsOption("advanced-features"));
-        boolean useVfox = resolveUseVfox(arguments);
+
+        Boolean decided = resolveBackendChoice(arguments);
+        this.pendingBackendChoice = decided == null;
+        boolean useVfox = decided != null && decided; // provisional default while undecided: mise
         this.state.vfox(useVfox);
-        SdkVersionBackend sdkBackend = useVfox ? vfoxSdkBackend : miseSdkBackend;
-        ShellActivationService activation = useVfox ? vfoxActivation : miseActivation;
-        this.actions = new MiseActions(query, tools, maintenance, activation, cancelRegistry,
-                executor, state, r -> runner().runOnRenderThread(r), sdkBackend, vfoxSdkBackend);
+        this.actions = buildActions(useVfox);
 
         this.statusPanel = new StatusPanel(this);
         this.toolsPanel = new ToolsPanel(this);
@@ -146,6 +174,14 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.taskArgsModal = new TaskArgsModal(this);
         this.addPluginModal = new AddPluginModal(this);
         this.helpOverlay = new HelpOverlay(this);
+        this.selectBackendModal = new SelectBackendModal();
+    }
+
+    private MiseActions buildActions(boolean useVfox) {
+        SdkVersionBackend sdkBackend = useVfox ? vfoxSdkBackend : miseSdkBackend;
+        ShellActivationService activation = useVfox ? vfoxActivation : miseActivation;
+        return new MiseActions(query, tools, maintenance, activation, cancelRegistry,
+                executor, state, r -> runner().runOnRenderThread(r), sdkBackend, vfoxSdkBackend);
     }
 
     private static final String MISE_CONFIG_FILE = "mise.toml";
@@ -158,14 +194,17 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     /**
-     * Picks the SDK backend for this project — used consistently for both tool
-     * install/use/list and shell activation. {@code --backend=mise|vfox} is an explicit
-     * override; otherwise this detects an existing {@link #MISE_CONFIG_FILE} or
-     * {@link #VFOX_CONFIG_FILE} in the working directory. If neither exists, it asks once on
-     * the console — before the TUI takes over the terminal, so plain stdin/stdout still work —
-     * and creates the chosen config file so the choice sticks on the next launch.
+     * Resolves the SDK backend for this project when it's determinable without asking —
+     * used consistently for both tool install/use/list and shell activation.
+     * {@code --backend=mise|vfox} is an explicit override; otherwise this detects an
+     * existing {@link #MISE_CONFIG_FILE} or {@link #VFOX_CONFIG_FILE} in the working
+     * directory. Returns null when neither applies, meaning it's a first run: the caller
+     * shows {@link #selectBackendModal} once the TUI is running instead of asking on a raw
+     * console before it starts — a prompt used to read {@code System.in} directly, which
+     * raced the TUI backend for ownership of stdin and crashed depending on which backend
+     * was active (see git history / README troubleshooting).
      */
-    private static boolean resolveUseVfox(ApplicationArguments arguments) {
+    private static @Nullable Boolean resolveBackendChoice(ApplicationArguments arguments) {
         List<String> values = arguments.getOptionValues("backend");
         if (values != null) {
             if (values.stream().anyMatch(v -> v.equalsIgnoreCase("vfox"))) {
@@ -183,37 +222,22 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         if (Files.exists(cwd.resolve(VFOX_CONFIG_FILE))) {
             return true;
         }
-
-        boolean useVfox = promptForVfox();
-        createProjectConfig(cwd, useVfox);
-        return useVfox;
+        return null;
     }
 
-    /** Asks once on the console which backend to use. Blank input or closed stdin defaults to mise. */
-    private static boolean promptForVfox() {
-        System.out.println();
-        System.out.println("No " + MISE_CONFIG_FILE + " or " + VFOX_CONFIG_FILE + " found in this project.");
-        System.out.print("Which version manager should tambo use here? [mise/vfox] (default mise): ");
-        System.out.flush();
-        try (BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
-            while (true) {
-                String line = in.readLine();
-                if (line == null || line.isBlank()) {
-                    return false;
-                }
-                String answer = line.strip().toLowerCase();
-                if (answer.equals("vfox")) {
-                    return true;
-                }
-                if (answer.equals("mise")) {
-                    return false;
-                }
-                System.out.print("Please type \"mise\" or \"vfox\": ");
-                System.out.flush();
-            }
-        } catch (IOException e) {
-            return false;
-        }
+    /**
+     * Callback from {@link #selectBackendModal} once the user picks mise or vfox on a first
+     * run. Creates the project config so the choice sticks next launch, rebuilds
+     * {@link #actions} if the pick differs from the provisional {@code mise} default the
+     * session started with, and then begins the session exactly as a already-decided
+     * launch would.
+     */
+    private void onBackendPicked(boolean useVfox) {
+        pendingBackendChoice = false;
+        createProjectConfig(Path.of("").toAbsolutePath(), useVfox);
+        state.vfox(useVfox);
+        this.actions = buildActions(useVfox);
+        beginSession();
     }
 
     /**
@@ -249,6 +273,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     @Override
+    public String uiBackend() {
+        return config.backend();
+    }
+
+    @Override
     public @Nullable String focusedId() {
         return runner() != null ? runner().focusManager().focusedId() : null;
     }
@@ -266,7 +295,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     public boolean modalOpen() {
         return !registryModal.isOpen() && !configEditor.isOpen() && !confirmModal.isOpen()
-                && !taskArgsModal.isOpen() && !addPluginModal.isOpen();
+                && !taskArgsModal.isOpen() && !addPluginModal.isOpen() && !selectBackendModal.isOpen();
     }
 
     @Override
@@ -307,9 +336,21 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     protected void onStart() {
+        registerGlobalKeys();
+        if (pendingBackendChoice) {
+            selectBackendModal.open(this::onBackendPicked);
+        } else {
+            beginSession();
+        }
+    }
+
+    /**
+     * Runs once the backend is settled — either it was already decided at startup, or
+     * {@link #onBackendPicked} just resolved a first-run choice from {@link #selectBackendModal}.
+     */
+    private void beginSession() {
         state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for " + (state.vfox() ? "vfox" : "mise")
                 + ". Press ? for help, a to add an SDK.");
-        registerGlobalKeys();
         actions.loadInitial();
     }
 
@@ -327,10 +368,29 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         return false;
     }
 
+    /**
+     * Toggles between the two TamboUI terminal backends and persists the choice to
+     * {@code tambo.properties}. TamboUI picks its backend once at process startup, so this
+     * can't take effect on the running session — the log message says as much.
+     */
+    private void switchUiBackend() {
+        String next = TamboConfig.BACKEND_JLINE3.equals(config.backend())
+                ? TamboConfig.BACKEND_PANAMA
+                : TamboConfig.BACKEND_JLINE3;
+        config.setBackend(next);
+        state.addLog(LogLevel.INFO, "UI backend set to " + next + " — restart tambo for this to take effect");
+    }
+
     private void registerGlobalKeys() {
         runner().eventRouter().addGlobalHandler(event -> {
             if (!(event instanceof KeyEvent key)) {
                 return EventResult.UNHANDLED;
+            }
+            if (selectBackendModal.isOpen()) {
+                // No focusable input of its own, and nothing else should be reachable
+                // until the first-run choice is made — swallow every key here.
+                selectBackendModal.handleKey(key);
+                return EventResult.HANDLED;
             }
             if (helpOverlay.isOpen()) {
                 if (key.isCancel() || key.isConfirm() || key.isChar('?')) {
@@ -396,6 +456,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
             if (key.isChar('U')) {
                 if (requireAdvanced(state.vfox() ? "vfox upgrade" : "mise self-update")) {
                     actions.selfUpdate();
+                }
+                return EventResult.HANDLED;
+            }
+            if (key.isChar('B')) {
+                if (requireAdvanced("Switch UI backend")) {
+                    switchUiBackend();
                 }
                 return EventResult.HANDLED;
             }
@@ -472,6 +538,13 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     protected Element render() {
+        if (selectBackendModal.isOpen()) {
+            // Nothing else is decided yet (buildHeader() alone would already call
+            // actions.ensureDoctor(), firing a mise command before the user has even
+            // chosen mise vs vfox) — show only the picker over a blank backdrop.
+            return stack(text(""), selectBackendModal.build());
+        }
+
         Element body = dock()
                 .top(buildHeader(), length(1))
                 .bottom(buildFooter(), length(1))

@@ -2,9 +2,11 @@ package com.sampong.tambo.tui.features;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import java.util.Set;
 
 import org.springframework.stereotype.Component;
 
@@ -17,16 +19,26 @@ import lombok.extern.slf4j.Slf4j;
  * <p>
  * Everything is optional: a missing or unreadable file yields the built-in
  * {@link Theme#defaults() defaults} and no key overrides, so tambo runs
- * unchanged out of the box. Two sections are honoured:
+ * unchanged out of the box. Three sections are honoured:
  * <ul>
  *   <li>{@code theme.*} — palette colours (see {@link Theme})</li>
  *   <li>{@code keys.*} — navigation binding overrides merged onto the standard
  *       set, e.g. {@code keys.moveUp = Up, k, w}</li>
+ *   <li>{@code ui.backend} — which TamboUI terminal backend to render with
+ *       ({@code jline3} or {@code panama}), settable in-app via {@code B}
+ *       (Advanced panel); see {@link #applyBackendPreference()}</li>
  * </ul>
  */
 @Slf4j
 @Component
 public class TamboConfig {
+
+    /** tambo.properties key for {@link #backend()}. */
+    private static final String BACKEND_KEY = "ui.backend";
+    /** Must match a {@code dev.tamboui.terminal.BackendProvider#name()} on the classpath. */
+    public static final String BACKEND_JLINE3 = "jline3";
+    public static final String BACKEND_PANAMA = "panama";
+    private static final Set<String> VALID_BACKENDS = Set.of(BACKEND_JLINE3, BACKEND_PANAMA);
 
     private final Theme theme;
     private final Properties properties;
@@ -34,10 +46,51 @@ public class TamboConfig {
     public TamboConfig() {
         this.properties = load();
         this.theme = Theme.fromProperties(properties);
+        applyBackendPreference();
     }
 
     public Theme theme() {
         return theme;
+    }
+
+    /** The configured TamboUI terminal backend name, defaulting to {@value #BACKEND_JLINE3}. */
+    public String backend() {
+        String configured = properties.getProperty(BACKEND_KEY);
+        return configured != null && VALID_BACKENDS.contains(configured) ? configured : BACKEND_JLINE3;
+    }
+
+    /**
+     * Persists a new {@link #backend()} choice to {@code tambo.properties}. Takes effect on
+     * the next launch — TamboUI picks its backend once at startup (see
+     * {@link #applyBackendPreference()}), so a running session can't hot-swap it.
+     */
+    public synchronized void setBackend(String backend) {
+        if (!VALID_BACKENDS.contains(backend)) {
+            throw new IllegalArgumentException("Unknown UI backend: " + backend);
+        }
+        properties.setProperty(BACKEND_KEY, backend);
+        Path file = configFile();
+        try {
+            Files.createDirectories(file.getParent());
+            try (OutputStream out = Files.newOutputStream(file)) {
+                properties.store(out, "tambo configuration");
+            }
+        } catch (IOException e) {
+            log.warn("Could not save {}: {}", file, e.getMessage());
+        }
+    }
+
+    /**
+     * Selects which TamboUI backend {@code dev.tamboui.terminal.BackendFactory} creates, by
+     * setting the {@code tamboui.backend} system property it reads. Only applies our
+     * {@link #backend()} preference when neither that property nor {@code TAMBOUI_BACKEND} is
+     * already set externally, so an explicit deployment-level override always wins over the
+     * persisted in-app choice.
+     */
+    private void applyBackendPreference() {
+        if (System.getProperty("tamboui.backend") == null && System.getenv("TAMBOUI_BACKEND") == null) {
+            System.setProperty("tamboui.backend", backend());
+        }
     }
 
     /**

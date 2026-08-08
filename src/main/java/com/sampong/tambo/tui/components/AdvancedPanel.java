@@ -43,6 +43,7 @@ public final class AdvancedPanel {
         }
         rows.add(keyRow("x", "uninstall selected tool"));
         rows.add(keyRow("R", "remove tool from config"));
+        rows.add(keyRow("B", "switch UI backend (now: " + ctx.uiBackend() + ")"));
         rows.add(text(""));
         rows.add(text("V hides this panel").dim());
 
