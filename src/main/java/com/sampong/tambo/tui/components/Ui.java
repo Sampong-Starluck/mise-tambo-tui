@@ -3,6 +3,9 @@ package com.sampong.tambo.tui.components;
 import static dev.tamboui.toolkit.Toolkit.row;
 import static dev.tamboui.toolkit.Toolkit.text;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.event.KeyCode;
@@ -130,5 +133,31 @@ public final class Ui {
     public static String fixedWidth(@Nullable String s, int width) {
         String truncated = truncate(s, width);
         return truncated.length() >= width ? truncated : truncated + " ".repeat(width - truncated.length());
+    }
+
+    /**
+     * Word-wraps {@code text} to at most {@code width} columns per line. Done by hand rather
+     * than relying on TextElement's own {@code Overflow.WRAP_WORD} — that flag didn't actually
+     * reflow multi-line content inside a list item / dialog in practice, so callers get back
+     * plain lines they add as separate elements instead, which renders correctly everywhere
+     * else in this app. A single word longer than {@code width} is kept whole rather than cut.
+     */
+    public static List<String> wordWrap(String text, int width) {
+        List<String> lines = new ArrayList<>();
+        StringBuilder line = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (!line.isEmpty() && line.length() + 1 + word.length() > width) {
+                lines.add(line.toString());
+                line.setLength(0);
+            }
+            if (!line.isEmpty()) {
+                line.append(' ');
+            }
+            line.append(word);
+        }
+        if (!line.isEmpty()) {
+            lines.add(line.toString());
+        }
+        return lines;
     }
 }

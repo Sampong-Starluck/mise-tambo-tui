@@ -8,6 +8,7 @@ public final class PanelIds {
     public static final String ENV = "panel-env";
     public static final String TASKS = "panel-tasks";
     public static final String LOG = "panel-log";
+    public static final String ADVANCED = "panel-advanced";
     public static final String TOOLS_FILTER = "panel-tools-filter";
     public static final String ENV_FILTER = "panel-env-filter";
     public static final String TASKS_FILTER = "panel-tasks-filter";

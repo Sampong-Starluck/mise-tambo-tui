@@ -53,6 +53,7 @@ public final class HelpOverlay {
                 text("tambo — a lazygit-style TUI for " + tool).bold(),
                 text(""),
                 helpLine(vfox ? "2, 5" : "1-5", "Jump to a panel (5 = command log)"),
+                helpLine("6", "[advanced] Jump to the Advanced panel (only once V is on)"),
                 helpLine("Tab / Shift+Tab", "Cycle panels"),
                 helpLine("Up/Down, j/k", "Move selection / scroll"),
                 helpLine("/", vfox ? "Filter the focused list; Esc clears"
@@ -68,7 +69,7 @@ public final class HelpOverlay {
             lines.add(helpLine("p", "Add plugin — fuzzy-find the vfox catalog and register it"));
         }
 
-        lines.add(helpLine("V", "Toggle the Advanced panel — reveals [advanced] keys below"));
+        lines.add(helpLine("V", "Toggle the Advanced panel — an actionable menu for [advanced] keys below"));
         if (!vfox) {
             lines.add(helpLine("E", "[advanced] Edit global mise config.toml in-app"));
         }
@@ -121,7 +122,8 @@ public final class HelpOverlay {
         lines.add(text("install/use" + (vfox ? "/self-update" : "/upgrade/self-update") + "/Add SDK (need the network).").dim());
         lines.add(text(""));
         lines.add(text("[advanced] keys are hidden until V is pressed (or launch with").dim());
-        lines.add(text("--advanced-features). The Advanced panel then lists them on the left.").dim());
+        lines.add(text("--advanced-features). The Advanced panel then splits off Details;").dim());
+        lines.add(text("↑/↓ + Enter runs one directly, or the letter still works anywhere.").dim());
         lines.add(text(""));
         lines.add(text("Press ? or Esc to close").dim());
 

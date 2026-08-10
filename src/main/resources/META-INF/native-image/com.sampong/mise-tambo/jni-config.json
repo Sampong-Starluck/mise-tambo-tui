@@ -1,0 +1,8 @@
+[
+  {
+    "name": "org.jline.nativ.Kernel32",
+    "fields": [
+      { "name": "INVALID_HANDLE_VALUE" }
+    ]
+  }
+]

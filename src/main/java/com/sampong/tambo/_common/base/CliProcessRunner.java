@@ -22,6 +22,7 @@ import com.sampong.tambo._common.model.CliResult;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -30,6 +31,7 @@ import lombok.extern.slf4j.Slf4j;
  * so callers running this from a UI render loop must dispatch it to a background thread.
  */
 @Slf4j
+@RequiredArgsConstructor
 public class CliProcessRunner {
 
     /**
@@ -44,16 +46,12 @@ public class CliProcessRunner {
     /** ANSI escape sequences (colors, cursor movement) a CLI may emit even when piped. */
     private static final Pattern ANSI = Pattern.compile("\\x1B\\[[;\\d]*[ -/]*[@-~]");
 
+    @NonNull
     private final String binary;
+    @NonNull
     private final AsyncTaskExecutor executor;
+    @NonNull
     private final CancelRegistry cancelRegistry;
-
-    public CliProcessRunner(@NonNull String binary, @NonNull AsyncTaskExecutor executor,
-                            @NonNull CancelRegistry cancelRegistry) {
-        this.binary = binary;
-        this.executor = executor;
-        this.cancelRegistry = cancelRegistry;
-    }
 
     public CliResult run(@NonNull List<String> args, @NonNull Duration timeout) {
         return run(args, timeout, null);

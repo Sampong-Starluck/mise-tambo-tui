@@ -276,7 +276,18 @@ hide it. Launch with `--advanced-features` to start a session with it already on
     │   ├── VfoxSdkBackend.java               (SdkVersionBackend over vfox; parses plain-text output)
     │   └── VfoxShellActivationServiceImp.java
     └── tui/
-        ├── MiseTuiApp.java                   (top-level TUI, key bindings, layout, backend selection)
+        ├── MiseTuiApp.java                   (Spring wiring + the ToolkitApp process hooks, each one
+        │                                       line deferring to layout/keys/lifecycle below)
+        ├── TuiComponents.java                (bundles every panel/modal instance for layout/ and keys/)
+        ├── layout/
+        │   └── AppLayout.java                (turns UiState into what's on screen: header, sidebar
+        │                                       accordion, main column, footer, modal stacking)
+        ├── keys/
+        │   └── GlobalKeyBindings.java        (turns a keypress into an action: the global key
+        │                                       handler, nav bindings, and the Advanced menu's actions)
+        ├── lifecycle/
+        │   └── AppLifecycle.java             (mise/vfox backend selection, first-run picker
+        │                                       callback, and session-start data load)
         ├── components/
         │   ├── StatusPanel.java              (mise status and health)
         │   ├── ToolsPanel.java               (tool browser, version selector)
@@ -284,12 +295,15 @@ hide it. Launch with `--advanced-features` to start a session with it already on
         │   ├── TasksPanel.java               (task runner with running… indicator)
         │   ├── DetailPanel.java              (detailed info for current selection)
         │   ├── LogPanel.java                 (streaming operation output)
+        │   ├── AdvancedPanel.java            (interactive menu for maintenance/config actions)
         │   ├── HelpOverlay.java              (? — keyboard reference)
         │   ├── RegistryModal.java            (add SDK fuzzy-find modal)
         │   ├── AddPluginModal.java           (vfox-only plugin registration modal)
         │   ├── ConfigEditorModal.java        (in-app project/global config editor)
         │   ├── TaskArgsModal.java            (run a task with extra arguments)
         │   ├── ConfirmModal.java             (confirmation prompts)
+        │   ├── SelectBackendModal.java       (first-run mise/vfox picker)
+        │   ├── SwitchBackendModal.java       (jline3/panama picker, B key)
         │   └── Ui.java                       (common UI utilities)
         ├── features/
         │   ├── MiseActions.java              (operations: run, cancel, install, upgrade, self-update)
@@ -410,6 +424,12 @@ tambo's own optional settings live in `<config-dir>/tambo.properties`, where `<c
 ### `BackendException: All backend providers failed to create a backend`
 
 See [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama) — this means neither TamboUI terminal backend could open a terminal. With the default `jline3` backend, this usually means stdin/stdout isn't a real TTY (e.g. piped input, or a terminal emulator that doesn't allocate one); run tambo from an interactive terminal.
+
+### `Unable to create a system terminal, creating a dumb terminal` / garbled `^[[?2027;0$y` on screen (Windows native image)
+
+Only happens in the **native-image** build, not the JVM/`spring-boot:run` build — and happens regardless of which terminal you launch from (Windows Terminal, PowerShell, `cmd.exe`), which rules out the "not a real TTY" cause above. Enable `--logging.level.org.jline=DEBUG` to see why: every jline terminal provider fails to construct, and the one that matters — `jni`, jline's native Win32-console provider — fails with `java.lang.NoSuchFieldError: org.jline.nativ.Kernel32.INVALID_HANDLE_VALUE` during `Kernel32`'s native static initializer. jline3 doesn't propagate that failure as an error; it silently falls back to a "dumb terminal" and logs this warning, then TamboUI's terminal-capability probe (querying DECRQM mode 2027) gets sent anyway — since the dumb terminal never reads the reply back in, it leaks onto the screen as literal escape-code text instead of being consumed.
+
+Root cause: `org.jline:jline:3.25.1`'s own bundled GraalVM metadata (`META-INF/native-image/org.jline/jline-native/jni-config.json`, inside the jar) has a typo — the field is registered as the literal string `"INVALID_HANDLE_VALUE,"` (trailing comma baked into the name) instead of `"INVALID_HANDLE_VALUE"`, so native-image never wires up JNI access to the real field. This project ships a corrective override at [`src/main/resources/META-INF/native-image/com.sampong/mise-tambo/jni-config.json`](src/main/resources/META-INF/native-image/com.sampong/mise-tambo/jni-config.json), which GraalVM merges additively with jline's own (broken) entry to register the correctly-spelled field. If this resurfaces after a `tamboui-jline3-backend` / jline version bump, check whether upstream jline has fixed the typo before assuming the override is still needed.
 
 ### Native binary crashes on terminal resize (`Fatal error: Must either be at a safepoint or in native mode`)
 

@@ -39,6 +39,7 @@ public final class StatusPanel {
         List<Element> rows = new ArrayList<>();
         rows.add(row(text("mise    ").dim(),
                 doctorKnown ? text(doctor.version()).bold() : pending()));
+        rows.add(row(text("ui      ").dim(), text(ctx.uiBackend()).bold()));
         if (ctx.state().offline()) {
             rows.add(row(text("mode    ").dim(), text("OFFLINE").yellow().bold()));
         }

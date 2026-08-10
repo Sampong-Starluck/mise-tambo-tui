@@ -4,6 +4,10 @@ import java.util.Properties;
 
 import dev.tamboui.style.Color;
 
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.experimental.Accessors;
+
 /**
  * The colour palette panels render from. Loaded from the user's optional
  * {@code tambo.properties} (see {@link TamboConfig}); every value falls back to
@@ -13,6 +17,9 @@ import dev.tamboui.style.Color;
  * Values are colour names ({@code cyan}, {@code green}, {@code dark-gray}, …) or
  * {@code #rrggbb} hex.
  */
+@Getter
+@Accessors(fluent = true)
+@RequiredArgsConstructor
 public final class Theme {
 
     /** Highlights, selected rows, titles. */
@@ -21,12 +28,6 @@ public final class Theme {
     private final Color focus;
     /** Border of unfocused panels. */
     private final Color idle;
-
-    public Theme(Color accent, Color focus, Color idle) {
-        this.accent = accent;
-        this.focus = focus;
-        this.idle = idle;
-    }
 
     /** The built-in palette — identical to the colours hard-coded before theming. */
     public static Theme defaults() {
@@ -40,18 +41,6 @@ public final class Theme {
                 parseColor(props.getProperty("theme.accent"), d.accent),
                 parseColor(props.getProperty("theme.focus"), d.focus),
                 parseColor(props.getProperty("theme.idle"), d.idle));
-    }
-
-    public Color accent() {
-        return accent;
-    }
-
-    public Color focus() {
-        return focus;
-    }
-
-    public Color idle() {
-        return idle;
     }
 
     /** Parses a colour name or {@code #rrggbb} hex; returns {@code fallback} when unset or unrecognised. */
