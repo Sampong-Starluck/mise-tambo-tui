@@ -50,7 +50,7 @@ public final class HelpOverlay {
         List<Element> lines = new ArrayList<>(List.of(
                 text("tambo — a lazygit-style TUI for " + tool).bold(),
                 text(""),
-                helpLine(vfox ? "2, 5" : "1-5", "Jump to a panel (5 = command log)"),
+                helpLine(vfox ? "1, 2, 5" : "1-5", "Jump to a panel (5 = command log)"),
                 helpLine("6", "[advanced] Jump to the Advanced panel (only once V is on)"),
                 helpLine("Tab / Shift+Tab", "Cycle panels"),
                 helpLine("Up/Down, j/k", "Move selection / scroll"),

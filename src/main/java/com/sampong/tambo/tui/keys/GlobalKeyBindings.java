@@ -212,7 +212,7 @@ public final class GlobalKeyBindings {
                 }
                 return EventResult.HANDLED;
             }
-            if (key.isChar('1') && !ctx.state().vfox()) {
+            if (key.isChar('1')) {
                 ctx.focus(PanelIds.STATUS);
                 return EventResult.HANDLED;
             }
