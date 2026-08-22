@@ -128,6 +128,14 @@ public final class MiseActions {
     }
 
     /**
+     * vfox's counterpart to {@link #ensureDoctor()}: {@code vfox -v} fills the header's
+     * version badge, loaded on first render the same way.
+     */
+    public void ensureVfoxVersion() {
+        loadLazy(state.vfoxVersionLazy(), "vfox-version", vfoxBackend::version, null);
+    }
+
+    /**
      * P2 — {@code mise outdated} (~1.2 s cold, network). Only decorates tool
      * rows with "↑ version"; every row renders correctly without it, so it is
      * pulled in behind the already-visible list.

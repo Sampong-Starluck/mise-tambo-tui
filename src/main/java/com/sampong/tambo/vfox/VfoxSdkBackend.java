@@ -40,6 +40,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     private static final Duration UNINSTALL_TIMEOUT = Duration.ofMinutes(2);
     private static final Duration UNUSE_TIMEOUT = Duration.ofSeconds(30);
     private static final Duration AVAILABLE_TIMEOUT = Duration.ofSeconds(20);
+    private static final Duration VERSION_TIMEOUT = Duration.ofSeconds(10);
     /** Longer than {@link #ADD_TIMEOUT}: a user-supplied {@code --source} may be a git clone. */
     private static final Duration ADD_PLUGIN_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration SELF_UPDATE_TIMEOUT = Duration.ofMinutes(5);
@@ -196,6 +197,24 @@ public class VfoxSdkBackend implements SdkVersionBackend {
      */
     public CliResult selfUpdate(Consumer<String> onLine) {
         return cli.runStreaming(List.of("upgrade"), SELF_UPDATE_TIMEOUT, onLine, "vfox-self-update");
+    }
+
+    /**
+     * {@code vfox -v} — vfox's own version, e.g. {@code "vfox version 1.0.11"}, trimmed down
+     * to just the version number. Not part of {@link SdkVersionBackend}: mise's equivalent
+     * (shown in the header the same way) comes from {@code mise doctor} via a completely
+     * different service, so there is no shared contract to fit this into.
+     */
+    public String version() {
+        CliResult result = cli.run(List.of("-v"), VERSION_TIMEOUT);
+        if (!result.ok() || result.stdout().isBlank()) {
+            return "unknown";
+        }
+        String line = clean(result.stdout().strip());
+        String prefix = "vfox version ";
+        return line.regionMatches(true, 0, prefix, 0, prefix.length())
+                ? line.substring(prefix.length()).strip()
+                : line;
     }
 
     @Override

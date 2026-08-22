@@ -10,13 +10,14 @@
     </parent>
     <groupId>com.sampong</groupId>
     <artifactId>mise-tambo</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3</version>
     <name>mise-tambo</name>
     <description>A Spring CLI application for mise-en-place with TamboUI</description>
 
     <properties>
         <java.version>25</java.version>
         <tamboui.version>0.4.0</tamboui.version>
+        <picocli.version>4.7.7</picocli.version>
         <maven.test.skip>true</maven.test.skip>
     </properties>
 
@@ -43,7 +44,7 @@
             <version>${tamboui.version}</version>
         </dependency>
 
-        <!-- Both TUI rendering backends are on the classpath; TamboConfig picks one via
+        <!-- All three TUI rendering backends are on the classpath; TamboConfig picks one via
              the `tamboui.backend` system property (see TamboConfig#applyBackendPreference),
              defaulting to jline3. The `B` key (Advanced panel) lets the user switch, taking
              effect on the next restart. jline3 is the default: the Panama backend's SIGWINCH
@@ -59,6 +60,11 @@
             <artifactId>tamboui-panama-backend</artifactId>
             <version>${tamboui.version}</version>
         </dependency>
+        <dependency>
+            <groupId>dev.tamboui</groupId>
+            <artifactId>tamboui-aesh-backend</artifactId>
+            <version>${tamboui.version}</version>
+        </dependency>
 
         <!-- JSON parsing for `mise ... -J` output -->
         <dependency>
@@ -72,6 +78,32 @@
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
             <version>1.0.0</version>
+        </dependency>
+
+        <!-- Command-line parsing for the app's own flags (backend, offline,
+             advanced-features): typed options, validation, and generated help/version output,
+             in place of hand-rolled ApplicationArguments string matching. -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+            <version>${picocli.version}</version>
+        </dependency>
+        <!-- Annotation processor only: generates native-image reflection config for
+             TamboCommand's @Option fields at compile time (see maven-compiler-plugin
+             below), so picocli's field injection keeps working under GraalVM native-image. -->
+        <dependency>
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli-codegen</artifactId>
+            <version>${picocli.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <!-- TamboUI's picocli integration (TuiMixin's alt-screen/mouse-capture/etc. options,
+             TuiCommand base class): not yet published as a ${tamboui.version} release, only as a
+             snapshot from the sonatype-snapshots repository above, so pinned independently. -->
+        <dependency>
+            <groupId>dev.tamboui</groupId>
+            <artifactId>tamboui-picocli</artifactId>
+            <version>0.4.0-SNAPSHOT</version>
         </dependency>
 
         <dependency>
@@ -106,7 +138,19 @@
                             <groupId>org.projectlombok</groupId>
                             <artifactId>lombok</artifactId>
                         </path>
+                        <path>
+                            <groupId>info.picocli</groupId>
+                            <artifactId>picocli-codegen</artifactId>
+                            <version>${picocli.version}</version>
+                        </path>
                     </annotationProcessorPaths>
+                    <!-- Scopes picocli-codegen's generated native-image config under this
+                         project's own directory (META-INF/native-image/picocli-generated/<groupId>/<artifactId>/)
+                         instead of a shared location, avoiding collisions with other picocli
+                         users on the classpath. -->
+                    <compilerArgs>
+                        <arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>

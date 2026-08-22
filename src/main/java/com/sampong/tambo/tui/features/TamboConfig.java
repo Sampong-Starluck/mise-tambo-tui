@@ -25,7 +25,7 @@ import lombok.extern.slf4j.Slf4j;
  *   <li>{@code keys.*} — navigation binding overrides merged onto the standard
  *       set, e.g. {@code keys.moveUp = Up, k, w}</li>
  *   <li>{@code ui.backend} — which TamboUI terminal backend to render with
- *       ({@code jline3} or {@code panama}), settable in-app via {@code B}
+ *       ({@code jline3}, {@code panama}, or {@code aesh}), settable in-app via {@code B}
  *       (Advanced panel); see {@link #applyBackendPreference()}</li>
  * </ul>
  */
@@ -38,7 +38,8 @@ public class TamboConfig {
     /** Must match a {@code dev.tamboui.terminal.BackendProvider#name()} on the classpath. */
     public static final String BACKEND_JLINE3 = "jline3";
     public static final String BACKEND_PANAMA = "panama";
-    private static final Set<String> VALID_BACKENDS = Set.of(BACKEND_JLINE3, BACKEND_PANAMA);
+    public static final String BACKEND_AESH = "aesh";
+    private static final Set<String> VALID_BACKENDS = Set.of(BACKEND_JLINE3, BACKEND_PANAMA, BACKEND_AESH);
 
     private final Theme theme;
     private final Properties properties;

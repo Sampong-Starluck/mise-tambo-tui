@@ -9,6 +9,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ImportRuntimeHints;
 
+import com.sampong.tambo.cli.TamboCommand;
+
+import picocli.CommandLine;
+import picocli.CommandLine.ParameterException;
+import picocli.CommandLine.ParseResult;
+import picocli.CommandLine.UnmatchedArgumentException;
+
 @SpringBootApplication
 @ImportRuntimeHints(TamboApplication.TamboUiResourceHints.class)
 public class TamboApplication {
@@ -34,7 +41,34 @@ public class TamboApplication {
         }
     }
 
+    /**
+     * Parses and validates {@code args} with picocli first (giving {@code --help}/{@code --version}
+     * and validated errors on bad input), then boots Spring directly rather than through picocli's
+     * {@code execute()} — see {@link TamboCommand}'s class javadoc for why that distinction matters
+     * for the native-image AOT build.
+     */
     static void main(String[] args) {
-        System.exit(SpringApplication.exit(SpringApplication.run(TamboApplication.class, args)));
+        TamboCommand command = new TamboCommand();
+        CommandLine cli = new CommandLine(command).setCaseInsensitiveEnumValuesAllowed(true);
+
+        ParseResult parseResult;
+        try {
+            parseResult = cli.parseArgs(args);
+        } catch (ParameterException ex) {
+            cli.getErr().println(ex.getMessage());
+            if (!UnmatchedArgumentException.printSuggestions(ex, cli.getErr())) {
+                ex.getCommandLine().usage(cli.getErr());
+            }
+            System.exit(cli.getCommandSpec().exitCodeOnInvalidInput());
+            return;
+        }
+        if (CommandLine.printHelpIfRequested(parseResult)) {
+            System.exit(CommandLine.ExitCode.OK);
+            return;
+        }
+
+        SpringApplication app = new SpringApplication(TamboApplication.class);
+        app.addInitializers(ctx -> ctx.getBeanFactory().registerSingleton("tamboCommand", command));
+        System.exit(SpringApplication.exit(app.run()));
     }
 }

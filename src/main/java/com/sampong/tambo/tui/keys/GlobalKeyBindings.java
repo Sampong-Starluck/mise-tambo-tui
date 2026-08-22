@@ -109,8 +109,16 @@ public final class GlobalKeyBindings {
                 return EventResult.HANDLED;
             }
             if (key.isChar('V')) {
-                ctx.state().advancedFeatures(!ctx.state().advancedFeatures());
-                ctx.state().addLog(LogLevel.INFO, ctx.state().advancedFeatures()
+                boolean enabling = !ctx.state().advancedFeatures();
+                ctx.state().advancedFeatures(enabling);
+                if (enabling) {
+                    // Focus the panel this key just revealed — otherwise ↑/↓ stay routed
+                    // to whatever had focus before and silently do nothing.
+                    ctx.focus(PanelIds.ADVANCED);
+                } else if (PanelIds.ADVANCED.equals(ctx.focusedId())) {
+                    ctx.focus(PanelIds.TOOLS);
+                }
+                ctx.state().addLog(LogLevel.INFO, enabling
                         ? "Advanced features enabled — see the Advanced panel"
                         : "Advanced features hidden");
                 return EventResult.HANDLED;
@@ -312,8 +320,9 @@ public final class GlobalKeyBindings {
                     () -> ctx.confirm("Prune unused/old tool versions?", ctx.actions()::prune)));
         }
         menu.add(new AdvancedPanel.Action("B", "Switch UI backend (now: " + config.backend() + ")",
-                "Opens a picker for jline3 (recommended, portable) vs panama (native, faster, "
-                        + "riskier on native-image resize and Windows Git Bash/MinTTY).",
+                "Opens a picker for jline3 (recommended, portable), panama (native, faster, "
+                        + "riskier on native-image resize and Windows Git Bash/MinTTY), or aesh "
+                        + "(pure-Java, experimental here).",
                 () -> ui.switchBackendModal().open(this::applyBackendChoice)));
         return menu;
     }

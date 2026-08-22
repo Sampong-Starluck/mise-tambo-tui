@@ -153,12 +153,13 @@ public final class AppLayout {
 
     private Element buildHeader() {
         if (ctx.state().vfox()) {
-            // No `vfox doctor` equivalent exists — nothing to query, so this is a static badge.
+            // No `vfox doctor` equivalent exists, but `vfox -v` gives at least a version badge.
+            ctx.actions().ensureVfoxVersion();
             return row(
                     text(" tambo ").bold().cyan(),
                     text("— a TUI for vfox").dim(),
                     spacer(),
-                    text("vfox").fg(Color.GREEN)
+                    text("vfox " + ctx.state().vfoxVersion()).fg(Color.GREEN)
             );
         }
         // Both fields here come from `mise doctor`, which loads lazily; until it

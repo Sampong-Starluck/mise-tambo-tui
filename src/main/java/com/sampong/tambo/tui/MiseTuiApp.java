@@ -1,15 +1,16 @@
 package com.sampong.tambo.tui;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
+import dev.tamboui.picocli.TuiMixin;
 import dev.tamboui.toolkit.app.ToolkitApp;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.TuiConfig;
 
 import com.sampong.tambo._common.base.CancelRegistry;
+import com.sampong.tambo.cli.TamboCommand;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
@@ -75,6 +76,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final TuiComponents ui;
     private final AppLayout layout;
     private final GlobalKeyBindings keyBindings;
+    private final TuiMixin tuiOptions;
 
     public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
                       @NonNull MiseMaintenanceService maintenance,
@@ -83,15 +85,16 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                       @NonNull CancelRegistry cancelRegistry, @NonNull TamboConfig config,
                       @NonNull MiseSdkBackend miseSdkBackend, @NonNull VfoxSdkBackend vfoxSdkBackend,
                       @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
-                      @NonNull ApplicationArguments arguments) {
+                      @NonNull TamboCommand command) {
         this.config = config;
         this.state = new UiState();
-        this.state.offline(arguments.containsOption("offline"));
-        this.state.advancedFeatures(arguments.containsOption("advanced-features"));
+        this.state.offline(command.offline());
+        this.state.advancedFeatures(command.advancedFeatures());
+        this.tuiOptions = command.tuiOptions();
 
         this.lifecycle = new AppLifecycle(query, tools, maintenance, miseActivation, vfoxActivation,
                 cancelRegistry, miseSdkBackend, vfoxSdkBackend, executor, state,
-                r -> runner().runOnRenderThread(r), arguments);
+                r -> runner().runOnRenderThread(r), command);
 
         ToolsPanel toolsPanel = new ToolsPanel(this);
         TasksPanel tasksPanel = new TasksPanel(this);
@@ -155,7 +158,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     public boolean modalOpen() {
         return !ui.registryModal().isOpen() && !ui.configEditor().isOpen() && !ui.confirmModal().isOpen()
-                && !ui.taskArgsModal().isOpen() && !ui.addPluginModal().isOpen() && !ui.selectBackendModal().isOpen();
+                && !ui.taskArgsModal().isOpen() && !ui.addPluginModal().isOpen() && !ui.selectBackendModal().isOpen()
+                && !ui.switchBackendModal().isOpen();
     }
 
     @Override
@@ -175,7 +179,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     @Override
     protected TuiConfig configure() {
-        return TuiConfig.builder().mouseCapture(true).bindings(keyBindings.navBindings()).build();
+        // mouseCapture forced on regardless of --mouse: this app has always shipped with mouse
+        // support on by default, unlike TuiMixin's opt-in default, so the flag is a no-op here.
+        return tuiOptions.toConfig().toBuilder()
+                .mouseCapture(true)
+                .bindings(keyBindings.navBindings())
+                .build();
     }
 
     @Override
