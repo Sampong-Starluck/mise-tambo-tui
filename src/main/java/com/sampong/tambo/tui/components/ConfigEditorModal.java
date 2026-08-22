@@ -19,6 +19,7 @@ import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -41,6 +42,7 @@ public final class ConfigEditorModal {
     @NonNull
     private final UiContext ctx;
 
+    @Getter
     private boolean open;
     private @Nullable Path file;
     private String title = "";
@@ -49,10 +51,6 @@ public final class ConfigEditorModal {
     private boolean confirmDiscard;
     private boolean newFile;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     /** Opens the editor on a config file; logs an error and stays closed when it can't be read. */
     public void open(@NonNull Path file, @NonNull String title) {

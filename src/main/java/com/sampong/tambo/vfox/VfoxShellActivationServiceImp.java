@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 
+import org.jspecify.annotations.NullMarked;
 import org.springframework.stereotype.Service;
 
 import com.sampong.tambo._common.model.CliResult;
@@ -44,6 +45,7 @@ public class VfoxShellActivationServiceImp implements ShellActivationService {
     private final VfoxCli cli;
 
     @Override
+    @NullMarked
     public ActivationOutcome activateInShell() {
         Shell shell = ShellDetector.detectShell();
         return switch (shell) {

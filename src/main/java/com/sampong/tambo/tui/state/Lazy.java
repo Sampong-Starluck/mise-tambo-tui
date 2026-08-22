@@ -1,7 +1,5 @@
 package com.sampong.tambo.tui.state;
 
-import lombok.NonNull;
-
 /**
  * A value fetched on first use rather than at startup.
  * <p>
@@ -43,7 +41,7 @@ public final class Lazy<T> {
      */
     private int generation;
 
-    public Lazy(@NonNull T placeholder) {
+    public Lazy(T placeholder) {
         this.placeholder = placeholder;
         this.value = placeholder;
     }
@@ -86,7 +84,7 @@ public final class Lazy<T> {
     }
 
     /** Publishes a completed load, ignoring one that was invalidated while in flight. */
-    public void publish(int token, @NonNull T loaded) {
+    public void publish(int token, T loaded) {
         if (token != generation) {
             return;
         }

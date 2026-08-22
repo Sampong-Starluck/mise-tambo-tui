@@ -116,7 +116,7 @@ public final class LogPanel {
         for (LogEntry e : ctx.state().log()) {
             longest = Math.max(longest, e.text().length());
         }
-        int clamped = Math.min(offset, Math.max(0, longest - 1));
+        int clamped = Math.clamp(longest - 1, 0, offset);
         if (clamped != offset) {
             ctx.state().logHScroll(clamped);
         }

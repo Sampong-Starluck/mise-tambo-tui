@@ -24,6 +24,7 @@ import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -56,15 +57,12 @@ public final class AddPluginModal {
     @NonNull
     private final UiContext ctx;
 
+    @Getter
     private boolean open;
     private final TextInputState search = new TextInputState();
     private String lastQuery = "";
     private int index;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     public void open() {
         preOpenFocus = ctx.focusedId();

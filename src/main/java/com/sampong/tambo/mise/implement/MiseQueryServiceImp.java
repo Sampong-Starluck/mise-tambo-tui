@@ -90,8 +90,8 @@ public class MiseQueryServiceImp implements MiseQueryService {
                             v.active));
                 }
             }
-            tools.sort(Comparator.comparing((ToolVersion t) -> t.tool())
-                    .thenComparing((ToolVersion t) -> t.version()));
+            tools.sort(Comparator.comparing(ToolVersion::tool)
+                    .thenComparing(ToolVersion::version));
             return tools;
         } catch (Exception e) {
             return List.of();

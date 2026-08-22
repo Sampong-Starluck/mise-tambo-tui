@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
+import org.jspecify.annotations.NullMarked;
 import org.springframework.stereotype.Service;
 
 import com.sampong.tambo._common.model.CliResult;
@@ -53,11 +54,13 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     private final VfoxCli cli;
 
     @Override
+    @NullMarked
     public String name() {
         return "vfox";
     }
 
     @Override
+    @NullMarked
     public List<ToolVersion> listTools() {
         CliResult result = cli.run(List.of("list"), LIST_TIMEOUT);
         if (!result.ok() || result.stdout().isBlank()) {
@@ -110,6 +113,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     }
 
     @Override
+    @NullMarked
     public List<String> listRemoteVersions(String tool) {
         // Plain `vfox search <tool>` only returns a short recent-versions page; "all" is
         // required to get the full list the fuzzy-find version step is meant to browse.
@@ -142,6 +146,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
      * JSON. The ✓/✗ column marks whether the plugin is in vfox's official registry.
      */
     @Override
+    @NullMarked
     public List<RegistryEntry> listAvailable() {
         CliResult result = cli.run(List.of("available"), AVAILABLE_TIMEOUT);
         if (!result.ok() || result.stdout().isBlank()) {
@@ -194,6 +199,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     }
 
     @Override
+    @NullMarked
     public CliResult install(String toolAtVersion, Consumer<String> onLine, String cancelKey) {
         // Registering an already-added plugin is a benign no-op/error; only the install
         // that follows determines success.
@@ -202,6 +208,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     }
 
     @Override
+    @NullMarked
     public CliResult uninstall(String toolAtVersion) {
         return cli.run(List.of("uninstall", toolAtVersion), UNINSTALL_TIMEOUT);
     }
@@ -212,6 +219,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
      * Project scope only — global unpinning stays a manual {@code vfox unuse -g} for now.
      */
     @Override
+    @NullMarked
     public CliResult remove(String toolAtVersion) {
         return cli.run(List.of("unuse", "-p", toolName(toolAtVersion)), UNUSE_TIMEOUT);
     }
@@ -223,6 +231,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
      * {@link #install}, before running the actual scope switch.
      */
     @Override
+    @NullMarked
     public CliResult use(String toolAtVersion, boolean global, Consumer<String> onLine, String cancelKey) {
         cli.run(List.of("add", toolName(toolAtVersion)), ADD_TIMEOUT);
         CliResult installResult = cli.runStreaming(List.of("install", "-y", toolAtVersion), INSTALL_TIMEOUT, onLine, cancelKey);

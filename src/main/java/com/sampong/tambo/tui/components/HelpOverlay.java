@@ -13,6 +13,7 @@ import dev.tamboui.toolkit.element.Element;
 
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -24,12 +25,9 @@ public final class HelpOverlay {
 
     @NonNull
     private final UiContext ctx;
+    @Getter
     private boolean open;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     public void open() {
         preOpenFocus = ctx.focusedId();
