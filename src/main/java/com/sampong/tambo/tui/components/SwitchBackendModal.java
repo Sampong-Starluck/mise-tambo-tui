@@ -21,7 +21,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * The {@code B} picker for which TamboUI terminal backend to render with. Lists both
+ * The {@code B} picker for which TamboUI terminal backend to render with. Lists all three
  * backends with a short feature/risk blurb each; the cursor starts on whichever backend
  * is active now, {@code ↑}/{@code ↓} moves it, and Enter is the confirmation — it applies
  * the choice (persisted to {@code tambo.properties}, effective on restart) and closes.
@@ -45,7 +45,11 @@ public final class SwitchBackendModal {
                             + "Git Bash/MinTTY, and GraalVM native-image alike."),
             new Choice("panama", "panama",
                     "Native FFM terminal I/O. Can crash the process on terminal resize under "
-                            + "GraalVM native-image, and fails to start under Windows Git Bash/MinTTY."));
+                            + "GraalVM native-image, and fails to start under Windows Git Bash/MinTTY."),
+            new Choice("aesh", "aesh",
+                    "Pure-Java terminal I/O via the aesh-readline library. An alternative to "
+                            + "jline3 built on a different terminal stack; less exercised by this app "
+                            + "than the other two, so treat it as experimental here."));
 
     @NonNull
     private final UiContext ctx;

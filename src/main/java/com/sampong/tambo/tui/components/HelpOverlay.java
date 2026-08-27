@@ -13,6 +13,7 @@ import dev.tamboui.toolkit.element.Element;
 
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -24,12 +25,9 @@ public final class HelpOverlay {
 
     @NonNull
     private final UiContext ctx;
+    @Getter
     private boolean open;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     public void open() {
         preOpenFocus = ctx.focusedId();
@@ -52,7 +50,7 @@ public final class HelpOverlay {
         List<Element> lines = new ArrayList<>(List.of(
                 text("tambo — a lazygit-style TUI for " + tool).bold(),
                 text(""),
-                helpLine(vfox ? "2, 5" : "1-5", "Jump to a panel (5 = command log)"),
+                helpLine(vfox ? "1, 2, 5" : "1-5", "Jump to a panel (5 = command log)"),
                 helpLine("6", "[advanced] Jump to the Advanced panel (only once V is on)"),
                 helpLine("Tab / Shift+Tab", "Cycle panels"),
                 helpLine("Up/Down, j/k", "Move selection / scroll"),
@@ -86,7 +84,7 @@ public final class HelpOverlay {
             lines.add(helpLine("U", "[advanced] vfox upgrade — update vfox itself to the latest version"));
             lines.add(helpLine("P", "[advanced] Add plugin with explicit name [--alias/--source]"));
         }
-        lines.add(helpLine("B", "[advanced] Switch UI backend jline3/panama (now: " + ctx.uiBackend()
+        lines.add(helpLine("B", "[advanced] Switch UI backend jline3/panama/aesh (now: " + ctx.uiBackend()
                 + ") — takes effect on restart"));
         lines.add(helpLine("i", "Install selected tool"));
         lines.add(helpLine("u", "Apply selected tool to project " + configFile));

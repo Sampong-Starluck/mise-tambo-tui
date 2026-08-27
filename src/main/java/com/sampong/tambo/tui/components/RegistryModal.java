@@ -7,10 +7,7 @@ import static dev.tamboui.toolkit.Toolkit.spacer;
 import static dev.tamboui.toolkit.Toolkit.text;
 import static dev.tamboui.toolkit.Toolkit.textInput;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -28,6 +25,7 @@ import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -59,6 +57,7 @@ public final class RegistryModal {
     @NonNull
     private final UiContext ctx;
 
+    @Getter
     private boolean open;
     private Step step = Step.TOOL;
     private final TextInputState search = new TextInputState();
@@ -69,10 +68,6 @@ public final class RegistryModal {
     private boolean versionsLoading;
     private boolean installGlobal;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     public void open() {
         // The registry (mise's ~200 KB of JSON, or vfox's `available` catalog) is fetched
@@ -191,11 +186,13 @@ public final class RegistryModal {
         if (vfox) {
             // Selecting a version here only installs it (see confirmVersion) — vfox's
             // install has no local/global scope, so there is nothing to toggle.
+            assert tool != null;
             content.add(row(
                     text("Plugin ").dim(),
                     text(tool.shortName()).bold().cyan()
             ));
         } else {
+            assert tool != null;
             content.add(row(
                     text("SDK ").dim(),
                     text(tool.shortName()).bold().cyan(),
@@ -215,7 +212,7 @@ public final class RegistryModal {
             addWindowedRows(content, matches.size(), i -> {
                 String v = matches.get(i);
                 boolean sel = i == index;
-                boolean installed = vfox && isVersionInstalled(tool.shortName(), v);
+                boolean installed = vfox && isVersionInstalled(Objects.requireNonNull(tool).shortName(), v);
                 return row(
                         text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
                         sel ? text(v).bold().cyan() : text(v),
@@ -386,6 +383,7 @@ public final class RegistryModal {
             return;
         }
         String version = matches.get(Ui.clamp(index, matches.size()));
+        assert tool != null;
         String shortName = tool.shortName();
         close();
         if (ctx.state().vfox()) {

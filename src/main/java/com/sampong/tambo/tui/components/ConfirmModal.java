@@ -9,6 +9,7 @@ import dev.tamboui.tui.event.KeyEvent;
 
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -31,14 +32,11 @@ public final class ConfirmModal {
     @NonNull
     private final UiContext ctx;
 
+    @Getter
     private boolean open;
     private String message = "";
     private @Nullable Runnable onConfirm;
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     /** Opens the dialog; {@code onConfirm} runs on the render thread if the user confirms. */
     public void open(@NonNull String message, @NonNull Runnable onConfirm) {

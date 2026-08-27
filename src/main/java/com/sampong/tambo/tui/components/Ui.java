@@ -24,7 +24,7 @@ public final class Ui {
         if (size <= 0) {
             return 0;
         }
-        return Math.max(0, Math.min(i, size - 1));
+        return Math.clamp(i, 0, size - 1);
     }
 
     /** Returns true for the keys {@link #applyNav} knows how to handle. */
@@ -125,7 +125,7 @@ public final class Ui {
 
     /**
      * Truncates (or right-pads with spaces) to exactly {@code width} characters.
-     * Rows whose trailing text changes length every frame — a live streamed status
+     * Rows whose trailing text changes length every frame — a live-streamed status
      * line, say — must render at a constant width, or a shorter frame can leave
      * stale characters from a longer previous one un-overwritten on terminals that
      * don't clear the full cell span on redraw.

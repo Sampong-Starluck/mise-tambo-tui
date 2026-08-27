@@ -19,7 +19,7 @@ import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
-/** Panel 1 — mise health summary from {@code mise doctor}. */
+/** Panel 1 — health summary from {@code mise doctor}, or {@code vfox -v} in vfox mode. */
 @RequiredArgsConstructor
 public final class StatusPanel {
 
@@ -27,6 +27,16 @@ public final class StatusPanel {
     private final UiContext ctx;
 
     public Panel build() {
+        List<Element> rows = ctx.state().vfox() ? vfoxRows() : miseRows();
+
+        return panel("1 Status", rows.toArray(new Element[0]))
+                .id(PanelIds.STATUS).focusable(ctx.modalOpen())
+                .rounded()
+                .borderColor(ctx.theme().idle())
+                .focusedBorderColor(ctx.theme().focus());
+    }
+
+    private List<Element> miseRows() {
         // `mise doctor` is the slow half of this panel, so it is fetched on first
         // render rather than at startup. Until it answers every row below reports
         // "checking…": DoctorInfo.unknown() would otherwise render as a confident
@@ -48,12 +58,26 @@ public final class StatusPanel {
         rows.add(badgeRow("shims   ", doctorKnown, doctor.shimsOnPath(), null));
         rows.add(row(text("configs ").dim(),
                 doctorKnown ? text(String.valueOf(doctor.configFileCount())) : pending()));
+        return rows;
+    }
 
-        return panel("[1] Status", rows.toArray(new Element[0]))
-                .id(PanelIds.STATUS).focusable(ctx.modalOpen())
-                .rounded()
-                .borderColor(ctx.theme().idle())
-                .focusedBorderColor(ctx.theme().focus());
+    /**
+     * vfox has no {@code doctor} equivalent to source active/trust/shims/configs from — just
+     * {@code vfox -v} for a version badge (see {@link com.sampong.tambo.vfox.VfoxSdkBackend#version()}),
+     * mirroring what the header already shows in vfox mode.
+     */
+    private List<Element> vfoxRows() {
+        ctx.actions().ensureVfoxVersion();
+        boolean versionKnown = ctx.state().vfoxVersionLazy().everLoaded();
+
+        List<Element> rows = new ArrayList<>();
+        rows.add(row(text("vfox    ").dim(),
+                versionKnown ? text(ctx.state().vfoxVersion()).bold() : pending()));
+        rows.add(row(text("ui      ").dim(), text(ctx.uiBackend()).bold()));
+        if (ctx.state().offline()) {
+            rows.add(row(text("mode    ").dim(), text("OFFLINE").yellow().bold()));
+        }
+        return rows;
     }
 
     /**

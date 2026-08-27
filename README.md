@@ -67,17 +67,39 @@ Other flags:
 
 - `--offline` — skips anything that needs the network (install, use, self-update, Add SDK); shows only already-installed tools.
 - `--advanced-features` — starts the session with the [Advanced features](#advanced-features) panel already unlocked, same as pressing `V`.
+- `-h`, `--help` — prints usage and exits.
+- `-V`, `--version` — prints the app version and exits.
 
-## Choosing a UI backend: jline3 vs Panama
+Command-line parsing is handled by [picocli](https://picocli.info): invalid flags or values (e.g. `--backend=bogus`) print a validated error and usage instead of silently falling through.
 
-This is unrelated to the mise/vfox choice above — it's which TamboUI library renders the terminal itself. Both `tamboui-jline3-backend` and `tamboui-panama-backend` ship on tambo's classpath (see [pom.xml](pom.xml)); only one is active per run, picked once at process startup and unable to change mid-session:
+## Choosing a UI backend: jline3 vs Panama vs Aesh
+
+This is unrelated to the mise/vfox choice above — it's which TamboUI library renders the terminal itself. `tamboui-jline3-backend`, `tamboui-panama-backend`, and `tamboui-aesh-backend` all ship on tambo's classpath (see [pom.xml](pom.xml)); only one is active per run, picked once at process startup and unable to change mid-session:
 
 1. The `tamboui.backend` system property or `TAMBOUI_BACKEND` environment variable, if either is set externally, wins outright.
 2. Otherwise, the persisted `ui.backend` in `tambo.properties` is used — `jline3` if unset.
 
 Press `B` in the [Advanced features](#advanced-features) panel to switch; it persists the choice to `tambo.properties` and logs a reminder that it takes effect on the next restart, not the running session.
 
-**jline3 is the default and the recommended choice.** The Panama (FFM) backend has two known issues: a fatal, unrecoverable native-image crash on terminal resize (`SIGWINCH` interrupting an FFM upcall mid-safepoint), and a startup failure under Windows Git Bash/MinTTY (`GetConsoleMode()` probe failing on its emulated pipe-terminal). Switch to it only if you have a specific reason to.
+**jline3** — pure-Java terminal I/O:
+
+- ✅ Most portable: works under IDE run consoles, Windows Git Bash/MinTTY, and GraalVM native-image alike
+- ✅ No known crashes or startup failures in this app
+- ❌ Goes through the JVM's own I/O stack rather than talking to the OS terminal directly — the (marginally) heavier of the two
+
+**panama** — native FFM (Foreign Function & Memory API) terminal I/O:
+
+- ✅ Talks to the OS terminal directly instead of through jline's Java I/O layer — billed as the lower-overhead, faster path
+- ✅ No bundled JNI native library to load — sidesteps jline's own JNI/native-image config issues entirely (see [Troubleshooting](#troubleshooting))
+- ❌ Built on Java's comparatively new FFM API — less battle-tested in the wild than jline's long-established native terminal handling
+
+**aesh** — pure-Java terminal I/O via the [aesh-readline](https://github.com/aeshell/aesh-readline) library (`org.aesh:terminal-tty`), a different terminal stack from jline3's:
+
+- ✅ Pure Java like jline3, so it carries no FFM native-access requirement the way Panama does
+- ✅ A genuinely independent implementation — useful as a fallback if a jline3/native-image interaction (like the JNI typo in [Troubleshooting](#troubleshooting)) ever blocks the default backend
+- ❌ Not exercised by this app's own testing the way jline3 and Panama are (see the failure modes documented for each above) — no known issues here, but none ruled out either; treat it as experimental
+
+**jline3 is the default and the recommended choice.** Portability is the deciding factor: it runs correctly everywhere tambo ships — JVM, native-image, every terminal emulator tested so far — while Panama's two known issues are both hard failures (a fatal crash, a refusal to start) rather than degraded behavior. The resize crash is the more serious of the two: it's a **fatal, unrecoverable native-image crash** (`SIGWINCH` interrupting an FFM upcall mid-safepoint) that terminates the process outright and can't be caught by a `try`/`catch` anywhere in this app's own code — the session is just gone, no graceful fallback to jline3 mid-run. Switch to Panama only if you have a specific reason to and can rule out both failure modes for your setup — a resize during a native-image session, or launching from Git Bash/MinTTY on Windows. Switch to aesh only to work around a jline3-specific problem — it's on the classpath as a fallback option, not a validated alternative.
 
 ## Quick start
 
@@ -179,7 +201,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `T` *[advanced]* — trust this project's mise config (mise only)
 - `D` *[advanced]* — run `mise doctor` (mise only)
 - `U` *[advanced]* — self-update: `mise self-update` or `vfox upgrade`
-- `B` *[advanced]* — switch the UI backend between `jline3`/`panama`; takes effect on restart (see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama))
+- `B` *[advanced]* — switch the UI backend between `jline3`/`panama`/`aesh`; takes effect on restart (see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama-vs-aesh))
 - `P` — mise: upgrade all outdated tools (asks to confirm). vfox *[advanced]*: register a plugin by explicit name with `--alias`/`--source` (opens the same modal as `p`, but only once advanced features are on)
 - `X` *[advanced]* — prune unused/old tool versions (mise only)
 - `r` — refresh the current UI state
@@ -303,7 +325,7 @@ hide it. Launch with `--advanced-features` to start a session with it already on
         │   ├── TaskArgsModal.java            (run a task with extra arguments)
         │   ├── ConfirmModal.java             (confirmation prompts)
         │   ├── SelectBackendModal.java       (first-run mise/vfox picker)
-        │   ├── SwitchBackendModal.java       (jline3/panama picker, B key)
+        │   ├── SwitchBackendModal.java       (jline3/panama/aesh picker, B key)
         │   └── Ui.java                       (common UI utilities)
         ├── features/
         │   ├── MiseActions.java              (operations: run, cancel, install, upgrade, self-update)
@@ -387,7 +409,7 @@ tambo's own optional settings live in `<config-dir>/tambo.properties`, where `<c
 
 - `theme.*` — palette colours
 - `keys.*` — navigation binding overrides merged onto the standard set, e.g. `keys.moveUp = Up, k, w`
-- `ui.backend` — which TamboUI terminal backend to render with, `jline3` (default) or `panama`; see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama) below
+- `ui.backend` — which TamboUI terminal backend to render with, `jline3` (default), `panama`, or `aesh`; see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama-vs-aesh) below
 
 ## Development
 
@@ -423,7 +445,7 @@ tambo's own optional settings live in `<config-dir>/tambo.properties`, where `<c
 
 ### `BackendException: All backend providers failed to create a backend`
 
-See [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama) — this means neither TamboUI terminal backend could open a terminal. With the default `jline3` backend, this usually means stdin/stdout isn't a real TTY (e.g. piped input, or a terminal emulator that doesn't allocate one); run tambo from an interactive terminal.
+See [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama-vs-aesh) — this means neither TamboUI terminal backend could open a terminal. With the default `jline3` backend, this usually means stdin/stdout isn't a real TTY (e.g. piped input, or a terminal emulator that doesn't allocate one); run tambo from an interactive terminal.
 
 ### `Unable to create a system terminal, creating a dumb terminal` / garbled `^[[?2027;0$y` on screen (Windows native image)
 
@@ -433,7 +455,7 @@ Root cause: `org.jline:jline:3.25.1`'s own bundled GraalVM metadata (`META-INF/n
 
 ### Native binary crashes on terminal resize (`Fatal error: Must either be at a safepoint or in native mode`)
 
-Only happens on the **Panama** UI backend (`B` to switch, see [above](#choosing-a-ui-backend-jline3-vs-panama)), not the default `jline3`. On Linux/macOS, Panama's `UnixTerminal.onResize()` installs a `SIGWINCH` handler via a raw `sigaction()` call whose C-side handler is itself a Java upcall. Under GraalVM Native Image, a `SIGWINCH` can interrupt the main thread while it's already executing AOT-compiled Java; Substrate's upcall stub assumes the interrupted thread was cleanly in "native" state first, and when it isn't, `SafepointSlowpath.enterSlowPathTransitionFromNativeToNewStatus` aborts with this fatal error — an unrecoverable native crash that no try/catch in `tambo` can intercept. Switch back to `jline3` to avoid it.
+Only happens on the **Panama** UI backend (`B` to switch, see [above](#choosing-a-ui-backend-jline3-vs-panama-vs-aesh)), not the default `jline3`. On Linux/macOS, Panama's `UnixTerminal.onResize()` installs a `SIGWINCH` handler via a raw `sigaction()` call whose C-side handler is itself a Java upcall. Under GraalVM Native Image, a `SIGWINCH` can interrupt the main thread while it's already executing AOT-compiled Java; Substrate's upcall stub assumes the interrupted thread was cleanly in "native" state first, and when it isn't, `SafepointSlowpath.enterSlowPathTransitionFromNativeToNewStatus` aborts with this fatal error — an unrecoverable native crash that no try/catch in `tambo` can intercept. Switch back to `jline3` to avoid it.
 
 ### `panama: Failed to get input console mode` (Windows)
 

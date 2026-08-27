@@ -5,13 +5,13 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo._common.base.CliProcessRunner;
 import com.sampong.tambo._common.model.CliResult;
+import com.sampong.tambo.cli.TamboCommand;
 
 import org.jspecify.annotations.Nullable;
 
@@ -34,9 +34,9 @@ public class MiseCli {
 
     /** Reads stdout/stderr on the same virtual-thread executor the rest of the app uses. */
     public MiseCli(@Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor,
-                   @NonNull CancelRegistry cancelRegistry, @NonNull ApplicationArguments arguments) {
+                   @NonNull CancelRegistry cancelRegistry, @NonNull TamboCommand command) {
         this.runner = new CliProcessRunner("mise", executor, cancelRegistry);
-        this.offline = arguments.containsOption("offline");
+        this.offline = command.offline();
     }
 
     /** True when the app was launched with {@code --offline}: no mise command here may touch the network. */

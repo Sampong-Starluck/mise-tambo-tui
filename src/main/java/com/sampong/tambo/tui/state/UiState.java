@@ -52,6 +52,9 @@ public final class UiState {
     private final Lazy<Map<String, String>> env = new Lazy<>(Map.of());
     @Getter(AccessLevel.NONE)
     private final Lazy<DoctorInfo> doctor = new Lazy<>(DoctorInfo.unknown());
+    /** vfox's own version ({@code vfox -v}), shown in the header the way mise's is via {@link #doctor}. */
+    @Getter(AccessLevel.NONE)
+    private final Lazy<String> vfoxVersion = new Lazy<>("unknown");
     @Getter(AccessLevel.NONE)
     private final Lazy<List<TrustStatus>> trust = new Lazy<>(List.of());
     /** Set once at startup from {@code --offline}; gates network-requiring actions. */
@@ -154,6 +157,14 @@ public final class UiState {
 
     public Lazy<DoctorInfo> doctorLazy() {
         return doctor;
+    }
+
+    public String vfoxVersion() {
+        return vfoxVersion.value();
+    }
+
+    public Lazy<String> vfoxVersionLazy() {
+        return vfoxVersion;
     }
 
     public List<TrustStatus> trust() {

@@ -42,6 +42,13 @@ public final class AppLayout {
     /** A collapsed panel: just the top border with the title, plus the bottom border. */
     private static final int COLLAPSED_HEIGHT = 2;
     private static final int STATUS_HEIGHT = 8;
+    /**
+     * vfox's Status panel has far fewer rows than mise's (no doctor-derived active/trust/shims/
+     * configs — see {@link com.sampong.tambo.tui.components.StatusPanel}'s vfox branch), so it
+     * gets its own, shorter height rather than inheriting {@link #STATUS_HEIGHT} and leaving a
+     * block of dead space below it. Covers the vfox/ui rows; +1 when offline adds the mode row.
+     */
+    private static final int VFOX_STATUS_HEIGHT = 4;
     /** Fixed width of the Advanced panel when split side-by-side with Details (V toggles it on). */
     private static final int ADVANCED_WIDTH = 60;
 
@@ -95,12 +102,25 @@ public final class AppLayout {
     }
 
     private Column buildSidebar() {
-        // Status/Env/Tasks are entirely mise-derived (doctor/trust/env/tasks) with no vfox
-        // equivalent, so vfox mode shows Tools alone rather than three panels of nothing.
-        // The Advanced panel lives in the main column (see buildMainColumn()), not here —
-        // it needs more room than this sidebar can spare once terminals get cramped.
+        // Env/Tasks are entirely mise-derived (env/tasks) with no vfox equivalent, so vfox
+        // mode shows Status (now vfox-flavoured, see StatusPanel) plus Tools rather than four
+        // panels of mostly nothing. The Advanced panel lives in the main column (see
+        // buildMainColumn()), not here — it needs more room than this sidebar can spare once
+        // terminals get cramped.
         if (ctx.state().vfox()) {
-            return column(ui.toolsPanel().build().constraint(fill()));
+            int vfoxStatusHeight = VFOX_STATUS_HEIGHT + (ctx.state().offline() ? 1 : 0);
+            if (terminalHeight.getAsInt() >= ACCORDION_HEIGHT) {
+                return column(
+                        ui.statusPanel().build().constraint(length(vfoxStatusHeight)),
+                        ui.toolsPanel().build().constraint(fill())
+                );
+            }
+            String focus = ctx.focusedId();
+            String expandedId = PanelIds.STATUS.equals(focus) ? PanelIds.STATUS : PanelIds.TOOLS;
+            return column(
+                    ui.statusPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.STATUS, length(vfoxStatusHeight))),
+                    ui.toolsPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.TOOLS, fill()))
+            );
         }
         if (terminalHeight.getAsInt() >= ACCORDION_HEIGHT) {
             return column(
@@ -153,12 +173,13 @@ public final class AppLayout {
 
     private Element buildHeader() {
         if (ctx.state().vfox()) {
-            // No `vfox doctor` equivalent exists — nothing to query, so this is a static badge.
+            // No `vfox doctor` equivalent exists, but `vfox -v` gives at least a version badge.
+            ctx.actions().ensureVfoxVersion();
             return row(
                     text(" tambo ").bold().cyan(),
                     text("— a TUI for vfox").dim(),
                     spacer(),
-                    text("vfox").fg(Color.GREEN)
+                    text("vfox " + ctx.state().vfoxVersion()).fg(Color.GREEN)
             );
         }
         // Both fields here come from `mise doctor`, which loads lazily; until it
@@ -208,7 +229,7 @@ public final class AppLayout {
                 case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
                 case PanelIds.ADVANCED -> "↑/↓ select   enter run   V hide";
                 case null, default -> ctx.state().vfox()
-                        ? "2,5 jump   tab cycle"
+                        ? "1,2,5 jump   tab cycle"
                         : (ctx.state().advancedFeatures() ? "1-6 jump   tab cycle" : "1-5 jump   tab cycle");
             };
         }

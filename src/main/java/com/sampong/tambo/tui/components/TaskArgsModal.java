@@ -13,6 +13,7 @@ import dev.tamboui.widgets.input.TextInputState;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -32,14 +33,11 @@ public final class TaskArgsModal {
     @NonNull
     private final UiContext ctx;
 
+    @Getter
     private boolean open;
     private String taskName = "";
     private final TextInputState input = new TextInputState();
     private @Nullable String preOpenFocus;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     /** Opens the prompt for {@code taskName}, seeding it with any previously used args. */
     public void open(@NonNull String taskName, @NonNull String initialArgs) {

@@ -16,6 +16,7 @@ import dev.tamboui.widgets.input.TextInputState;
 
 import com.sampong.tambo.tui.state.UiContext;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -34,15 +35,12 @@ public final class PanelFilter {
     private final String inputId;
     private final String listId;
     private final TextInputState search = new TextInputState();
+    @Getter
     private boolean active;
 
     public PanelFilter(String inputId, String listId) {
         this.inputId = inputId;
         this.listId = listId;
-    }
-
-    public boolean isActive() {
-        return active;
     }
 
     public String query() {

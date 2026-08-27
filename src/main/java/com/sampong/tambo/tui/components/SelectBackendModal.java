@@ -9,6 +9,7 @@ import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.event.KeyEvent;
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
@@ -27,12 +28,9 @@ public final class SelectBackendModal {
 
     private static final int WIDTH = 60;
 
+    @Getter
     private boolean open;
     private @Nullable Consumer<Boolean> onPick;
-
-    public boolean isOpen() {
-        return open;
-    }
 
     /** Opens the picker; {@code onPick} runs on the render thread with true=vfox, false=mise. */
     public void open(@NonNull Consumer<Boolean> onPick) {

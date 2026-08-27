@@ -2,6 +2,7 @@ package com.sampong.tambo.mise.implement;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -73,9 +74,7 @@ public class MiseToolServiceImp implements MiseToolService {
         command.add(taskName);
         if (!args.isBlank()) {
             command.add("--");
-            for (String token : args.strip().split("\\s+")) {
-                command.add(token);
-            }
+            Collections.addAll(command, args.strip().split("\\s+"));
         }
         return cli.runStreaming(command, Duration.ofMinutes(15), onLine, cancelKey);
     }

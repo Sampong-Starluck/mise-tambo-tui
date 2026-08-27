@@ -3,14 +3,13 @@ package com.sampong.tambo.tui.lifecycle;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.function.Consumer;
 
-import org.springframework.boot.ApplicationArguments;
 import org.springframework.core.task.AsyncTaskExecutor;
 
 import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo._common.service.SdkVersionBackend;
+import com.sampong.tambo.cli.TamboCommand;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
 import com.sampong.tambo.mise.MiseToolService;
@@ -83,7 +82,7 @@ public final class AppLifecycle {
                          @NonNull CancelRegistry cancelRegistry, @NonNull MiseSdkBackend miseSdkBackend,
                          @NonNull VfoxSdkBackend vfoxSdkBackend, @NonNull AsyncTaskExecutor executor,
                          @NonNull UiState state, @NonNull Consumer<Runnable> renderThreadRunner,
-                         @NonNull ApplicationArguments arguments) {
+                         @NonNull TamboCommand command) {
         this.query = query;
         this.tools = tools;
         this.maintenance = maintenance;
@@ -96,7 +95,7 @@ public final class AppLifecycle {
         this.state = state;
         this.renderThreadRunner = renderThreadRunner;
 
-        Boolean decided = resolveBackendChoice(arguments);
+        Boolean decided = resolveBackendChoice(command);
         this.pendingBackendChoice = decided == null;
         boolean useVfox = decided != null && decided; // provisional default while undecided: mise
         state.vfox(useVfox);
@@ -130,15 +129,13 @@ public final class AppLifecycle {
      * TUI backend for ownership of stdin and crashed depending on which backend was active
      * (see git history / README troubleshooting).
      */
-    private static @Nullable Boolean resolveBackendChoice(ApplicationArguments arguments) {
-        List<String> values = arguments.getOptionValues("backend");
-        if (values != null) {
-            if (values.stream().anyMatch(v -> v.equalsIgnoreCase("vfox"))) {
-                return true;
-            }
-            if (values.stream().anyMatch(v -> v.equalsIgnoreCase("mise"))) {
-                return false;
-            }
+    private static @Nullable Boolean resolveBackendChoice(TamboCommand command) {
+        TamboCommand.Backend backend = command.backend();
+        if (backend == TamboCommand.Backend.vfox) {
+            return true;
+        }
+        if (backend == TamboCommand.Backend.mise) {
+            return false;
         }
 
         Path cwd = Path.of("").toAbsolutePath();
