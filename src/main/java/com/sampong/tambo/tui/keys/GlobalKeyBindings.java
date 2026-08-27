@@ -110,9 +110,12 @@ public final class GlobalKeyBindings {
             }
             if (key.isChar('V')) {
                 ctx.state().advancedFeatures(!ctx.state().advancedFeatures());
-                ctx.state().addLog(LogLevel.INFO, ctx.state().advancedFeatures()
-                        ? "Advanced features enabled — see the Advanced panel"
-                        : "Advanced features hidden");
+                if (ctx.state().advancedFeatures()) {
+                    ctx.state().addLog(LogLevel.INFO, "Advanced features enabled — see the Advanced panel");
+                    ctx.focus(PanelIds.ADVANCED);
+                } else {
+                    ctx.state().addLog(LogLevel.INFO, "Advanced features hidden");
+                }
                 return EventResult.HANDLED;
             }
             if (key.isChar('a')) {

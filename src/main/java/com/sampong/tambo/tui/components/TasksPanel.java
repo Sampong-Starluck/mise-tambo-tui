@@ -113,9 +113,9 @@ public final class TasksPanel {
 
     private String title(int total, int shown) {
         if (total == 0) {
-            return "4 Tasks";
+            return "[4] Tasks";
         }
-        return filter.isActive() ? "4 Tasks (" + shown + "/" + total + ")" : "4 Tasks (" + total + ")";
+        return filter.isActive() ? "[4] Tasks (" + shown + "/" + total + ")" : "[4] Tasks (" + total + ")";
     }
 
     private String emptyText() {

@@ -49,7 +49,7 @@ public final class StatusPanel {
         rows.add(row(text("configs ").dim(),
                 doctorKnown ? text(String.valueOf(doctor.configFileCount())) : pending()));
 
-        return panel("1 Status", rows.toArray(new Element[0]))
+        return panel("[1] Status", rows.toArray(new Element[0]))
                 .id(PanelIds.STATUS).focusable(ctx.modalOpen())
                 .rounded()
                 .borderColor(ctx.theme().idle())

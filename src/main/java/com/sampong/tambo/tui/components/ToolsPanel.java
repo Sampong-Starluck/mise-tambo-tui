@@ -105,9 +105,9 @@ public final class ToolsPanel {
 
     private String title(int total, int shown) {
         if (total == 0) {
-            return "2 Tools";
+            return "[2] Tools";
         }
-        return filter.isActive() ? "2 Tools (" + shown + "/" + total + ")" : "2 Tools (" + total + ")";
+        return filter.isActive() ? "[2] Tools (" + shown + "/" + total + ")" : "[2] Tools (" + total + ")";
     }
 
     private String emptyText() {

@@ -83,7 +83,7 @@ public final class EnvPanel {
     }
 
     private String title(int total, int shown) {
-        return filter.isActive() ? "3 Env (" + shown + "/" + total + ")" : "3 Env (" + total + ")";
+        return filter.isActive() ? "[3] Env (" + shown + "/" + total + ")" : "[3] Env (" + total + ")";
     }
 
     private String emptyText() {
