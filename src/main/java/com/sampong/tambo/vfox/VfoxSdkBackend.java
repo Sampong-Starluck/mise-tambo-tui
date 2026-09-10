@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Service;
 
 import com.sampong.tambo._common.model.CliResult;
@@ -73,6 +74,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
         Map<String, String> current = currentVersions();
         List<ToolVersion> tools = new ArrayList<>();
         String currentTool = null;
+        boolean sawVersion = false;
         for (String rawLine : result.stdout().split("\n")) {
             String line = clean(rawLine);
             if (line.isEmpty() || line.equalsIgnoreCase("All installed sdk versions")) {
@@ -85,12 +87,30 @@ public class VfoxSdkBackend implements SdkVersionBackend {
                     String version = token.startsWith("v") ? token.substring(1) : token;
                     boolean active = version.equals(current.get(currentTool)) || markedActive;
                     tools.add(new ToolVersion(currentTool, version, null, null, null, null, true, active));
+                    sawVersion = true;
                 }
             } else {
+                addIfVersionless(tools, currentTool, sawVersion);
                 currentTool = token.toLowerCase();
+                sawVersion = false;
             }
         }
+        addIfVersionless(tools, currentTool, sawVersion);
         return tools;
+    }
+
+    /**
+     * {@code vfox add <plugin>} registers a plugin without installing any version, and
+     * {@code vfox list} then prints it as a childless node ({@code ├──cmake} rather than
+     * {@code ├─┬cmake}). Without this, the tool name is simply overwritten by the next one and
+     * the plugin vanishes from the Tools panel — which is every freshly added plugin, since
+     * {@code add} never installs a version. Emitted with an empty version and
+     * {@code installed=false}, the state {@link ToolVersion#hasVersion()} exists to describe.
+     */
+    private static void addIfVersionless(List<ToolVersion> tools, @Nullable String tool, boolean sawVersion) {
+        if (tool != null && !sawVersion) {
+            tools.add(new ToolVersion(tool, "", null, null, null, null, false, false));
+        }
     }
 
     /** {@code vfox current} (no args): the active version of every installed SDK, tool name -> version. */

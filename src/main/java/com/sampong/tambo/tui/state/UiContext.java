@@ -44,4 +44,12 @@ public interface UiContext {
      * {@code initialArgs}; on Enter it runs {@code mise run <task> -- <args>}.
      */
     void promptTaskArgs(String taskName, String initialArgs);
+
+    /**
+     * Opens the registry modal straight at its version step for {@code tool}, skipping the
+     * plugin-picking step. Used by the Tools panel for a vfox plugin that is registered but
+     * has no version installed yet: there is no {@code tool@version} to act on, so "install"
+     * has to mean "pick a version first".
+     */
+    void promptVersionFor(String tool);
 }

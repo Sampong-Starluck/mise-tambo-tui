@@ -16,8 +16,21 @@ public record ToolVersion(
         boolean active
 ) {
 
-    /** Returns the {@code tool@version} identifier mise expects on the command line. */
+    /**
+     * False for a vfox plugin that has been registered ({@code vfox add}) but has no version
+     * installed yet — vfox lists such a plugin, so it gets a row, but there is no
+     * {@code tool@version} to install, uninstall or pin until a version is chosen.
+     */
+    public boolean hasVersion() {
+        return !version.isBlank();
+    }
+
+    /**
+     * Returns the {@code tool@version} identifier mise expects on the command line, or the
+     * bare tool name when no version is installed yet (see {@link #hasVersion()}) — never a
+     * dangling {@code "tool@"}, which is neither valid on a command line nor readable in a log.
+     */
     public String label() {
-        return tool + "@" + version;
+        return hasVersion() ? tool + "@" + version : tool;
     }
 }

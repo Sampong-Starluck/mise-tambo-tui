@@ -172,6 +172,11 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         ui.taskArgsModal().open(taskName, initialArgs);
     }
 
+    @Override
+    public void promptVersionFor(String tool) {
+        ui.registryModal().openAtVersion(tool);
+    }
+
     // ==================== ToolkitApp hooks ====================
     // Each just defers to the sibling package that owns the actual logic — see the class
     // javadoc. These can't move out themselves: Java requires overrides to live on the

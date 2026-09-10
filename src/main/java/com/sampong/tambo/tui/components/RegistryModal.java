@@ -356,7 +356,23 @@ public final class RegistryModal {
         if (matches.isEmpty()) {
             return;
         }
-        tool = matches.get(Ui.clamp(index, matches.size()));
+        enterVersionStep(matches.get(Ui.clamp(index, matches.size())));
+    }
+
+    /**
+     * Opens straight at the version step for an already-registered vfox plugin, skipping the
+     * plugin-picking step — the Tools panel's "install" action for a plugin that has no
+     * version installed yet. The catalog is still fetched, since {@link #build()} reads it,
+     * but the entry is synthesised from the name so this works even for a plugin added by
+     * {@code --source} that the catalog has never heard of.
+     */
+    public void openAtVersion(String toolName) {
+        open();
+        enterVersionStep(new RegistryEntry(toolName, null, null, null));
+    }
+
+    private void enterVersionStep(RegistryEntry entry) {
+        tool = entry;
         step = Step.VERSION;
         search.clear();
         lastQuery = "";

@@ -127,13 +127,16 @@ public final class ToolsPanel {
         String latest = ctx.state().outdated().get(t.tool());
         String statusText = busy ? busyText(t)
                 : latest != null ? "↑ " + latest
+                : !t.hasVersion() ? "no version"
                 : t.installed() ? (t.active() ? "active" : "installed") : "not installed";
         Color statusTextColor = busy ? Color.YELLOW : latest != null ? Color.YELLOW : statusColor;
         return row(
                 text(badge + " ").fg(statusColor),
                 // One pannable string so ←/→ can reveal long names the narrow
                 // sidebar clips (e.g. java@oracle-graalvm-25.0.3).
-                text(Ui.pan(t.tool() + "@" + t.version(), hScroll)).bold(),
+                // label() drops the "@" for a registered-but-uninstalled vfox plugin, so the
+                // row reads "cmake", not "cmake@".
+                text(Ui.pan(t.label(), hScroll)).bold(),
                 spacer(),
                 // Leading space guarantees a gap from the name even when the row
                 // overflows and the spacer collapses to zero. Fixed width so a
@@ -176,12 +179,23 @@ public final class ToolsPanel {
         }
         ToolVersion t = items.get(Ui.clamp(index, items.size()));
         if (event.isChar('i')) {
-            ctx.actions().installTool(t);
+            // A vfox plugin with no version installed has no tool@version to install, so
+            // "install" means "pick a version" — the registry modal's version step.
+            if (t.hasVersion()) {
+                ctx.actions().installTool(t);
+            } else {
+                ctx.promptVersionFor(t.tool());
+            }
             return EventResult.HANDLED;
         }
         if (event.isChar('u')) {
             // Apply to the project: writes tool@version into ./mise.toml
-            ctx.actions().useTool(t.label(), false);
+            if (t.hasVersion()) {
+                ctx.actions().useTool(t.label(), false);
+            } else {
+                ctx.state().addLog(LogLevel.INFO,
+                        "No version of " + t.tool() + " installed yet — press i to pick one");
+            }
             return EventResult.HANDLED;
         }
         if (event.isChar('x') || event.code() == KeyCode.DELETE) {
@@ -201,7 +215,12 @@ public final class ToolsPanel {
             return EventResult.HANDLED;
         }
         if (event.isChar('g')) {
-            ctx.actions().useTool(t.label(), true);
+            if (t.hasVersion()) {
+                ctx.actions().useTool(t.label(), true);
+            } else {
+                ctx.state().addLog(LogLevel.INFO,
+                        "No version of " + t.tool() + " installed yet — press i to pick one");
+            }
             return EventResult.HANDLED;
         }
         if (event.isChar('p') && !ctx.state().vfox()) {
