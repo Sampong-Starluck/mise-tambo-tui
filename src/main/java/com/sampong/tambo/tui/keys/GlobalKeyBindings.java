@@ -284,8 +284,9 @@ public final class GlobalKeyBindings {
      * The entries {@code AdvancedPanel} renders as a selectable menu. Each mirrors a global
      * letter shortcut (T/E/D/U/X/B/P) that keeps working on its own too — this just gives the
      * same actions a discoverable, directly actionable home instead of requiring the letter to
-     * be remembered. {@code x}/{@code R} (uninstall / remove from config) are intentionally
-     * absent: they act on whatever is selected in the Tools panel, which has no meaning here.
+     * be remembered. {@code x}/{@code R}/{@code d} (uninstall / remove from config / remove
+     * plugin) are intentionally absent: they act on whatever is selected in the Tools panel,
+     * which has no meaning here.
      */
     public List<AdvancedPanel.Action> buildAdvancedActions() {
         List<AdvancedPanel.Action> menu = new ArrayList<>();

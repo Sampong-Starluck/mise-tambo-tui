@@ -40,6 +40,8 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     private static final Duration USE_TIMEOUT = Duration.ofMinutes(10);
     private static final Duration UNINSTALL_TIMEOUT = Duration.ofMinutes(2);
     private static final Duration UNUSE_TIMEOUT = Duration.ofSeconds(30);
+    /** Same as {@link #UNINSTALL_TIMEOUT}: removing a plugin also deletes all of its installed versions. */
+    private static final Duration REMOVE_PLUGIN_TIMEOUT = Duration.ofMinutes(2);
     private static final Duration AVAILABLE_TIMEOUT = Duration.ofSeconds(20);
     private static final Duration VERSION_TIMEOUT = Duration.ofSeconds(10);
     /** Longer than {@link #ADD_TIMEOUT}: a user-supplied {@code --source} may be a git clone. */
@@ -261,6 +263,18 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     @NullMarked
     public CliResult remove(String toolAtVersion) {
         return cli.run(List.of("unuse", "-p", toolName(toolAtVersion)), UNUSE_TIMEOUT);
+    }
+
+    /**
+     * {@code vfox remove} prompts for confirmation, so {@code -y} is required with no TTY; it
+     * goes before the name, where urfave/cli reliably parses flags (by default it stops at the
+     * first positional argument). vfox deletes every installed version of the SDK along with
+     * the plugin.
+     */
+    @Override
+    @NullMarked
+    public CliResult removePlugin(String plugin) {
+        return cli.run(List.of("remove", "-y", plugin), REMOVE_PLUGIN_TIMEOUT);
     }
 
     /**

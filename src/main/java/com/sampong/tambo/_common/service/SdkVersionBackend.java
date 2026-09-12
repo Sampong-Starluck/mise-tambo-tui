@@ -40,6 +40,13 @@ public interface SdkVersionBackend {
     CliResult remove(String toolAtVersion);
 
     /**
+     * Removes the plugin behind {@code plugin} (a bare tool name). How destructive that is
+     * differs per backend: vfox always deletes every installed version of the SDK along with
+     * the plugin, while mise keeps installed versions and only drops the plugin itself.
+     */
+    CliResult removePlugin(String plugin);
+
+    /**
      * Pins {@code tool@version} at project scope (installing it if needed), or global scope
      * when {@code global} is true. Streams progress through {@code onLine}.
      */

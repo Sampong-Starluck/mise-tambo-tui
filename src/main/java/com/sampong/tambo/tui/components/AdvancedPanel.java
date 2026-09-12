@@ -30,7 +30,7 @@ import lombok.RequiredArgsConstructor;
  * same letter shortcuts (T/E/D/U/X/B/P) still work globally too — this is a discoverable,
  * directly actionable substitute for having to remember them, not a replacement.
  * <p>
- * {@code x}/{@code R} (uninstall / remove from config) are deliberately not listed here: they
+ * {@code x}/{@code R}/{@code d} (uninstall / remove from config / remove plugin) are deliberately not listed here: they
  * act on whatever tool is selected in the Tools panel, which has no meaning from this menu, so
  * they stay exactly where that context lives.
  */

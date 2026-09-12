@@ -218,6 +218,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 - `g` — install and pin the selected tool version globally (`-g` for vfox)
 - `x` *[advanced]* — uninstall the selected tool (asks to confirm)
 - `R` *[advanced]* — remove the selected tool from the project config (asks to confirm)
+- `d` *[advanced]* — remove the selected tool's plugin (asks to confirm). vfox: `vfox remove -y` also deletes **every installed version** of it. mise: `mise plugins uninstall` keeps installed versions, and only works for external plugins — core and registry tools have no plugin to remove
 - `p` — upgrade the selected tool to its newest version (mise only)
 - `c` — cancel the selected tool's operation
 - `C` — cancel all running operations
@@ -225,7 +226,7 @@ The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-ap
 ### Advanced features
 
 Maintenance and config-mutating actions — trust, global config editing, doctor, self-update, prune,
-uninstall, remove-from-config, switching the UI backend, and the Add Plugin `--alias`/`--source`
+uninstall, remove-from-config, remove plugin, switching the UI backend, and the Add Plugin `--alias`/`--source`
 syntax — are hidden by
 default so a new session's keyboard surface starts small. Press `V` to reveal them: it flips
 `advancedFeatures` on for the session, unlocks the `[advanced]` keys above, and shows an

@@ -121,7 +121,7 @@ public final class ToolsPanel {
 
     private Row toolRow(ToolVersion t) {
         boolean busy = ctx.state().isBusy(t.label()) || ctx.state().isBusy("upgrade:" + t.tool())
-                || ctx.state().isBusy("registry:" + t.tool());
+                || ctx.state().isBusy("registry:" + t.tool()) || ctx.state().isBusy("remove-plugin:" + t.tool());
         Color statusColor = t.active() ? Color.CYAN : t.installed() ? Color.GREEN : Color.DARK_GRAY;
         String badge = busy ? Ui.spinner() : t.active() ? "●" : t.installed() ? "✓" : "○";
         String latest = ctx.state().outdated().get(t.tool());
@@ -211,6 +211,18 @@ public final class ToolsPanel {
                 ctx.state().addLog(LogLevel.INFO, "Remove from config is an advanced feature — press V to enable it");
             } else if (t.sourcePath() != null) {
                 ctx.confirm("Remove " + t.label() + " from mise.toml?", () -> ctx.actions().removeTool(t));
+            }
+            return EventResult.HANDLED;
+        }
+        if (event.isChar('d')) {
+            if (!ctx.state().advancedFeatures()) {
+                ctx.state().addLog(LogLevel.INFO, "Remove plugin is an advanced feature — press V to enable it");
+            } else if (ctx.state().vfox()) {
+                ctx.confirm("Remove plugin " + t.tool() + " and ALL its installed versions?",
+                        () -> ctx.actions().removePlugin(t));
+            } else {
+                ctx.confirm("Remove mise plugin " + t.tool() + "? (installed versions are kept)",
+                        () -> ctx.actions().removePlugin(t));
             }
             return EventResult.HANDLED;
         }

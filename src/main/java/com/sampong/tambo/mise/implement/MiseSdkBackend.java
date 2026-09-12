@@ -61,6 +61,11 @@ public class MiseSdkBackend implements SdkVersionBackend {
     }
 
     @Override
+    public CliResult removePlugin(String plugin) {
+        return tools.removePlugin(plugin);
+    }
+
+    @Override
     public CliResult use(String toolAtVersion, boolean global, Consumer<String> onLine, String cancelKey) {
         return tools.use(toolAtVersion, global, onLine, cancelKey);
     }

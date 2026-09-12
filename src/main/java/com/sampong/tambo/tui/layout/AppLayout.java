@@ -222,8 +222,8 @@ public final class AppLayout {
             String focus = ctx.focusedId();
             hints = switch (focus) {
                 case PanelIds.TOOLS -> ctx.state().vfox()
-                        ? "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   R remove   g global   c cancel   C all"
-                        : "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   g global   p upgrade   c cancel   C all";
+                        ? "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   R remove   d rm plugin   g global   c cancel   C all"
+                        : "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   d rm plugin   g global   p upgrade   c cancel   C all";
                 case PanelIds.TASKS -> "↑/↓ select   / filter   ←/→ pan   enter run   : args   . re-run   c cancel   C all";
                 case PanelIds.ENV -> "↑/↓ scroll   / filter   ←/→ pan   y copy value";
                 case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";

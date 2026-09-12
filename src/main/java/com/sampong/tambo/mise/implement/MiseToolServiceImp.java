@@ -44,6 +44,19 @@ public class MiseToolServiceImp implements MiseToolService {
     }
 
     @Override
+    public CliResult removePlugin(@NonNull String plugin) {
+        CliResult result = cli.run(List.of("plugins", "uninstall", plugin), Duration.ofMinutes(2));
+        // mise only warns "<plugin> is not installed" for a name with no external plugin
+        // (core tools, aqua/ubi/… registry tools) and still exits 0 — turn that into a failure
+        // so the UI doesn't report a removal that never happened.
+        if (result.ok() && (result.stdout() + result.stderr()).toLowerCase().contains("is not installed")) {
+            return new CliResult(1, result.stdout(),
+                    plugin + " is not an installed mise plugin (core and registry tools have none to remove)");
+        }
+        return result;
+    }
+
+    @Override
     public CliResult upgrade(@NonNull String tool, @NonNull Consumer<String> onLine,
                                   @NonNull String cancelKey) {
         List<String> args = new ArrayList<>();

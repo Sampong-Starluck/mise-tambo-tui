@@ -90,6 +90,9 @@ public final class HelpOverlay {
         lines.add(helpLine("u", "Apply selected tool to project " + configFile));
         lines.add(helpLine("x", "[advanced] Uninstall selected tool (asks to confirm)"));
         lines.add(helpLine("R", "[advanced] Remove selected tool from project " + configFile + " (asks to confirm)"));
+        lines.add(helpLine("d", vfox
+                ? "[advanced] Remove selected tool's plugin AND all its versions (asks to confirm)"
+                : "[advanced] Remove selected tool's plugin, keeping versions (asks to confirm)"));
         lines.add(helpLine("g", "Install/set as global default"));
         if (!vfox) {
             lines.add(helpLine("p", "Upgrade selected tool to the newest version"));

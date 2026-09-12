@@ -24,6 +24,13 @@ public interface MiseToolService {
     CliResult remove(String toolAtVersion);
 
     /**
+     * Runs {@code mise plugins uninstall <plugin>}. Installed versions are kept (no
+     * {@code --purge}). Only external plugins can be removed — core and registry-backed tools
+     * have no plugin, which surfaces as a failed result rather than mise's silent exit 0.
+     */
+    CliResult removePlugin(String plugin);
+
+    /**
      * Runs {@code mise upgrade <tool>} to install and switch to the newest version
      * allowed by the config. Pass a bare tool name to upgrade just that tool, or an
      * empty string to upgrade every outdated tool. Streams output line-by-line.

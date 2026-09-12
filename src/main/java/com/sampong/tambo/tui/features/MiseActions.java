@@ -247,6 +247,27 @@ public final class MiseActions {
                 });
     }
 
+    /**
+     * Removes the plugin behind the selected tool: {@code vfox remove -y <tool>} (which also
+     * deletes every installed version) or {@code mise plugins uninstall <tool>} (which keeps
+     * them). Busy under {@code remove-plugin:<tool>} so every row of that tool shows a spinner.
+     */
+    public void removePlugin(@NonNull ToolVersion t) {
+        String plugin = t.tool();
+        String key = "remove-plugin:" + plugin;
+        if (state.markBusy(key)) {
+            return;
+        }
+        String command = backend.name().equals("vfox") ? "vfox remove -y " + plugin : "mise plugins uninstall " + plugin;
+        state.addLog(LogLevel.CMD, "$ " + command);
+        submitBackground("remove plugin " + plugin, key,
+                () -> backend.removePlugin(plugin),
+                result -> {
+                    logResult(result, "Removed plugin " + plugin, "Remove plugin failed: " + plugin);
+                    refresh();
+                });
+    }
+
     /** Runs {@code <backend> use [-g] tool@version} — installs and pins it at project or global scope. */
     public void useTool(@NonNull String toolAtVersion, boolean global) {
         if (blockedOffline("installing")) {
