@@ -17,7 +17,7 @@ import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
 
-import com.sampong.tambo.mise.model.RegistryEntry;
+import com.sampong.tambo._common.model.CatalogEntry;
 import com.sampong.tambo.tui.features.Fuzzy;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
@@ -67,8 +67,8 @@ public final class AddPluginModal {
     public void open() {
         preOpenFocus = ctx.focusedId();
         // Same P3 tier as the "Add SDK" modal — fetched here on first open, reused after.
-        ctx.state().registryLazy().retryIfFailed();
-        ctx.actions().ensureRegistry();
+        ctx.state().catalogLazy().retryIfFailed();
+        ctx.actions().ensureCatalog();
         search.clear();
         lastQuery = "";
         index = 0;
@@ -96,7 +96,7 @@ public final class AddPluginModal {
             lastQuery = query;
             index = 0;
         }
-        List<RegistryEntry> matches = fuzzyPlugins(query);
+        List<CatalogEntry> matches = fuzzyPlugins(query);
         index = Ui.clamp(index, matches.size());
 
         List<Element> content = new ArrayList<>();
@@ -113,8 +113,8 @@ public final class AddPluginModal {
         ));
         content.add(text(""));
 
-        Lazy<List<RegistryEntry>> registry = ctx.state().registryLazy();
-        if (ctx.state().registry().isEmpty()) {
+        Lazy<List<CatalogEntry>> registry = ctx.state().catalogLazy();
+        if (ctx.state().catalog().isEmpty()) {
             content.add(text(registry.everLoaded() || registry.failed()
                     ? (ctx.state().advancedFeatures()
                             ? "Catalog unavailable — type a name and flags to add it directly"
@@ -131,17 +131,17 @@ public final class AddPluginModal {
         content.add(text(""));
         content.add(text("enter add   esc cancel").dim());
 
-        return dialog("Add vfox plugin — available (" + ctx.state().registry().size() + ")",
+        return dialog("Add vfox plugin — available (" + ctx.state().catalog().size() + ")",
                 content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
     }
 
-    private Element pluginRow(List<RegistryEntry> matches, int i) {
-        RegistryEntry e = matches.get(i);
+    private Element pluginRow(List<CatalogEntry> matches, int i) {
+        CatalogEntry e = matches.get(i);
         boolean sel = i == index;
         return row(
                 text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
-                sel ? text(e.shortName()).bold().cyan() : text(e.shortName()).bold(),
+                sel ? text(e.name()).bold().cyan() : text(e.name()).bold(),
                 spacer(),
                 text(Ui.truncate(Ui.nullToDash(e.description()), 40) + " ").dim()
         );
@@ -158,8 +158,8 @@ public final class AddPluginModal {
         content.add(hidden > 0 ? text("… " + hidden + " more (keep typing to narrow)").dim() : text(""));
     }
 
-    private List<RegistryEntry> fuzzyPlugins(String query) {
-        return Fuzzy.filter(query, ctx.state().registry(), RegistryEntry::shortName, RegistryEntry::description);
+    private List<CatalogEntry> fuzzyPlugins(String query) {
+        return Fuzzy.filter(query, ctx.state().catalog(), CatalogEntry::name, CatalogEntry::description);
     }
 
     private EventResult handleKey(KeyEvent event) {
@@ -195,7 +195,7 @@ public final class AddPluginModal {
 
     private void confirm() {
         String typed = search.text();
-        List<RegistryEntry> matches = fuzzyPlugins(typed);
+        List<CatalogEntry> matches = fuzzyPlugins(typed);
         if (matches.isEmpty()) {
             // Nothing in the catalog matched — that's always true for the advanced
             // --alias/--source syntax, since it's longer than any bare candidate name, so
@@ -206,11 +206,11 @@ public final class AddPluginModal {
                 return;
             }
             close();
-            ctx.actions().addPlugin(typed);
+            ctx.actions().registerPlugin(typed);
             return;
         }
-        String toSubmit = matches.get(Ui.clamp(index, matches.size())).shortName();
+        String toSubmit = matches.get(Ui.clamp(index, matches.size())).name();
         close();
-        ctx.actions().addPlugin(toSubmit);
+        ctx.actions().registerPlugin(toSubmit);
     }
 }

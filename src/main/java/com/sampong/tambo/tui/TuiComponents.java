@@ -10,6 +10,7 @@ import com.sampong.tambo.tui.components.HelpOverlay;
 import com.sampong.tambo.tui.components.LogPanel;
 import com.sampong.tambo.tui.components.RegistryModal;
 import com.sampong.tambo.tui.components.SelectBackendModal;
+import com.sampong.tambo.tui.components.SidePanels;
 import com.sampong.tambo.tui.components.StatusPanel;
 import com.sampong.tambo.tui.components.SwitchBackendModal;
 import com.sampong.tambo.tui.components.TaskArgsModal;
@@ -30,6 +31,7 @@ public record TuiComponents(
         DetailPanel detailPanel,
         LogPanel logPanel,
         AdvancedPanel advancedPanel,
+        SidePanels sidePanels,
         RegistryModal registryModal,
         ConfigEditorModal configEditor,
         ConfirmModal confirmModal,

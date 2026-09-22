@@ -10,13 +10,10 @@ import org.springframework.core.task.AsyncTaskExecutor;
 import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.cli.TamboCommand;
-import com.sampong.tambo.mise.MiseMaintenanceService;
-import com.sampong.tambo.mise.MiseQueryService;
-import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.implement.MiseSdkBackend;
 import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
-import com.sampong.tambo.tui.features.MiseActions;
+import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
@@ -33,22 +30,16 @@ import lombok.NonNull;
  * {@link #actions()} if that picker resolves a choice, and the log line + initial data load
  * once the backend is settled either way.
  * <p>
+ * This is the only place that still deals in "mise or vfox" as a choice. Once it has resolved
+ * one, it hands the chosen {@link SdkVersionBackend} to {@link UiState} and everything
+ * downstream asks that what it supports rather than which one it is.
+ * <p>
  * {@code MiseTuiApp} owns the process lifecycle itself (it must — {@code configure()}/
  * {@code onStart()} are {@code ToolkitApp} overrides that can't live outside the subclass) but
  * delegates everything it decides to this class.
  */
 public final class AppLifecycle {
 
-    public static final String MISE_CONFIG_FILE = "mise.toml";
-    /** vfox's actual project-scope config filename — dot-prefixed, per vfox's own convention. */
-    public static final String VFOX_CONFIG_FILE = ".vfox.toml";
-
-    @NonNull
-    private final MiseQueryService query;
-    @NonNull
-    private final MiseToolService tools;
-    @NonNull
-    private final MiseMaintenanceService maintenance;
     @NonNull
     private final MiseShellActivationServiceImp miseActivation;
     @NonNull
@@ -70,22 +61,17 @@ public final class AppLifecycle {
      * Not final: rebuilt by {@link #onBackendPicked} if the first-run backend picker resolves
      * a choice that differs from the provisional {@code mise} default it was first built with.
      */
-    private MiseActions actions;
+    private BackendActions actions;
 
     /** True until {@link #onBackendPicked} resolves a first-run choice. */
     private boolean pendingBackendChoice;
 
-    public AppLifecycle(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
-                         @NonNull MiseMaintenanceService maintenance,
-                         @NonNull MiseShellActivationServiceImp miseActivation,
-                         @NonNull VfoxShellActivationServiceImp vfoxActivation,
-                         @NonNull CancelRegistry cancelRegistry, @NonNull MiseSdkBackend miseSdkBackend,
-                         @NonNull VfoxSdkBackend vfoxSdkBackend, @NonNull AsyncTaskExecutor executor,
-                         @NonNull UiState state, @NonNull Consumer<Runnable> renderThreadRunner,
-                         @NonNull TamboCommand command) {
-        this.query = query;
-        this.tools = tools;
-        this.maintenance = maintenance;
+    public AppLifecycle(@NonNull MiseShellActivationServiceImp miseActivation,
+                        @NonNull VfoxShellActivationServiceImp vfoxActivation,
+                        @NonNull CancelRegistry cancelRegistry, @NonNull MiseSdkBackend miseSdkBackend,
+                        @NonNull VfoxSdkBackend vfoxSdkBackend, @NonNull AsyncTaskExecutor executor,
+                        @NonNull UiState state, @NonNull Consumer<Runnable> renderThreadRunner,
+                        @NonNull TamboCommand command) {
         this.miseActivation = miseActivation;
         this.vfoxActivation = vfoxActivation;
         this.cancelRegistry = cancelRegistry;
@@ -98,11 +84,10 @@ public final class AppLifecycle {
         Boolean decided = resolveBackendChoice(command);
         this.pendingBackendChoice = decided == null;
         boolean useVfox = decided != null && decided; // provisional default while undecided: mise
-        state.vfox(useVfox);
         this.actions = buildActions(useVfox);
     }
 
-    public MiseActions actions() {
+    public BackendActions actions() {
         return actions;
     }
 
@@ -111,23 +96,28 @@ public final class AppLifecycle {
         return pendingBackendChoice;
     }
 
-    private MiseActions buildActions(boolean useVfox) {
+    /**
+     * Builds the actions layer for a backend and publishes that backend into {@link UiState},
+     * which is where every panel reads it from. The two must move together — a session with the
+     * actions of one backend and the capabilities of the other would run the wrong CLI behind
+     * the right-looking UI — so nothing else sets either.
+     */
+    private BackendActions buildActions(boolean useVfox) {
         SdkVersionBackend sdkBackend = useVfox ? vfoxSdkBackend : miseSdkBackend;
         ShellActivationService activation = useVfox ? vfoxActivation : miseActivation;
-        return new MiseActions(query, tools, maintenance, activation, cancelRegistry,
-                executor, state, renderThreadRunner, sdkBackend, vfoxSdkBackend);
+        state.backend(sdkBackend);
+        return new BackendActions(sdkBackend, activation, cancelRegistry, executor, state, renderThreadRunner);
     }
 
     /**
      * Resolves the SDK backend for this project when it's determinable without asking —
-     * used consistently for both tool install/use/list and shell activation.
-     * {@code --backend=mise|vfox} is an explicit override; otherwise this detects an
-     * existing {@link #MISE_CONFIG_FILE} or {@link #VFOX_CONFIG_FILE} in the working
-     * directory. Returns null when neither applies, meaning it's a first run: the caller
-     * shows the backend picker once the TUI is running instead of asking on a raw console
-     * before it starts — a prompt used to read {@code System.in} directly, which raced the
-     * TUI backend for ownership of stdin and crashed depending on which backend was active
-     * (see git history / README troubleshooting).
+     * used consistently for both SDK install/use/list and shell activation.
+     * {@code --backend=mise|vfox} is an explicit override; otherwise this detects an existing
+     * project config in the working directory. Returns null when neither applies, meaning it's
+     * a first run: the caller shows the backend picker once the TUI is running instead of
+     * asking on a raw console before it starts — a prompt used to read {@code System.in}
+     * directly, which raced the TUI backend for ownership of stdin and crashed depending on
+     * which backend was active (see git history / README troubleshooting).
      */
     private static @Nullable Boolean resolveBackendChoice(TamboCommand command) {
         TamboCommand.Backend backend = command.backend();
@@ -139,10 +129,10 @@ public final class AppLifecycle {
         }
 
         Path cwd = Path.of("").toAbsolutePath();
-        if (Files.exists(cwd.resolve(MISE_CONFIG_FILE))) {
+        if (Files.exists(cwd.resolve(MiseSdkBackend.PROJECT_CONFIG_FILE))) {
             return false;
         }
-        if (Files.exists(cwd.resolve(VFOX_CONFIG_FILE))) {
+        if (Files.exists(cwd.resolve(VfoxSdkBackend.PROJECT_CONFIG_FILE))) {
             return true;
         }
         return null;
@@ -157,7 +147,6 @@ public final class AppLifecycle {
     public void onBackendPicked(boolean useVfox) {
         pendingBackendChoice = false;
         createProjectConfig(Path.of("").toAbsolutePath(), useVfox);
-        state.vfox(useVfox);
         this.actions = buildActions(useVfox);
         beginSession();
     }
@@ -167,7 +156,7 @@ public final class AppLifecycle {
      * already exist. Both mise and vfox populate it themselves on the first {@code use}.
      */
     private static void createProjectConfig(Path cwd, boolean vfox) {
-        Path file = cwd.resolve(vfox ? VFOX_CONFIG_FILE : MISE_CONFIG_FILE);
+        Path file = cwd.resolve(vfox ? VfoxSdkBackend.PROJECT_CONFIG_FILE : MiseSdkBackend.PROJECT_CONFIG_FILE);
         try {
             if (Files.notExists(file)) {
                 Files.writeString(file, vfox ? "" : "[tools]\n");
@@ -182,7 +171,7 @@ public final class AppLifecycle {
      * {@link #onBackendPicked} just resolved a first-run choice.
      */
     public void beginSession() {
-        state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for " + (state.vfox() ? "vfox" : "mise")
+        state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for " + state.backend().name()
                 + ". Press ? for help, a to add an SDK.");
         actions.loadInitial();
     }

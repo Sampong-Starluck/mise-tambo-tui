@@ -10,25 +10,47 @@
     </parent>
     <groupId>com.sampong</groupId>
     <artifactId>mise-tambo</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
     <name>mise-tambo</name>
     <description>A Spring CLI application for mise-en-place with TamboUI</description>
 
     <properties>
         <java.version>25</java.version>
-        <tamboui.version>0.4.0</tamboui.version>
+        <tamboui.version>0.5.0</tamboui.version>
         <picocli.version>4.7.7</picocli.version>
+        <!-- Pinned to the version tamboui-jline3-backend resolves to, so swapping the uber
+             jar for individual modules does not silently change the JLine version. -->
+        <jline.version>3.25.1</jline.version>
         <maven.test.skip>true</maven.test.skip>
     </properties>
 
-    <repositories>
-        <repository>
-            <id>sonatype-snapshots</id>
-            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-            <snapshots><enabled>true</enabled></snapshots>
-            <releases><enabled>false</enabled></releases>
-        </repository>
-    </repositories>
+    <!--
+        Version management for the two multi-artifact dependency families this project
+        draws on, so no <dependency> below repeats a version:
+
+          * Spring Boot — managed by the spring-boot-dependencies BOM that
+            spring-boot-starter-parent (see <parent> above) already imports. The parent
+            is deliberately kept rather than swapped for a bare BOM import: it also
+            supplies the `native` profile the GraalVM build relies on, plus the
+            pluginManagement that versions spring-boot-maven-plugin,
+            native-maven-plugin, maven-compiler-plugin and surefire — all of which are
+            configured below without a <version> of their own.
+          * TamboUI — imported here, since there is no parent to inherit it from.
+
+        Single-artifact dependencies (jspecify, picocli) keep their versions inline;
+        there is no BOM to import for them.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>dev.tamboui</groupId>
+                <artifactId>tamboui-bom</artifactId>
+                <version>${tamboui.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- Spring DI + auto-config, no web server -->
@@ -41,7 +63,6 @@
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-toolkit</artifactId>
-            <version>${tamboui.version}</version>
         </dependency>
 
         <!-- All three TUI rendering backends are on the classpath; TamboConfig picks one via
@@ -53,17 +74,46 @@
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-jline3-backend</artifactId>
-            <version>${tamboui.version}</version>
+            <exclusions>
+                <!-- Replaced by the two fine-grained modules below. The backend pulls in
+                     org.jline:jline, the uber jar that repackages every JLine module into one
+                     artifact - including the jansi, jna and ffm terminal providers this app
+                     never selects. It also bundles each module's native-image metadata under
+                     its ORIGINAL artifactId (META-INF/native-image/org.jline/jline-terminal-jni/
+                     and friends), which no longer matches the containing jar, so native-image
+                     warns that the layout is not the recommended groupId/artifactId one. -->
+                <exclusion>
+                    <groupId>org.jline</groupId>
+                    <artifactId>jline</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- The only JLine surface JLineBackend touches: org.jline.terminal (Terminal,
+             TerminalBuilder, Attributes, Signal) and org.jline.utils (InfoCmp,
+             NonBlockingReader). Nothing in this project imports JLine directly. -->
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline-terminal</artifactId>
+            <version>${jline.version}</version>
+        </dependency>
+        <!-- jline-terminal on its own only offers the "dumb" fallback terminal; a provider
+             implementation has to be on the classpath for TerminalBuilder to hand back a real
+             one. JNI is the provider this app wants: it needs no extra dependency beyond the
+             jline-native library it pulls in, unlike jna/jansi, and unlike the ffm provider it
+             does not depend on the FFM terminal path that the Panama backend notes above
+             describe as crash-prone under native image. -->
+        <dependency>
+            <groupId>org.jline</groupId>
+            <artifactId>jline-terminal-jni</artifactId>
+            <version>${jline.version}</version>
         </dependency>
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-panama-backend</artifactId>
-            <version>${tamboui.version}</version>
         </dependency>
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-aesh-backend</artifactId>
-            <version>${tamboui.version}</version>
         </dependency>
 
         <!-- JSON parsing for `mise ... -J` output -->
@@ -98,12 +148,10 @@
             <scope>provided</scope>
         </dependency>
         <!-- TamboUI's picocli integration (TuiMixin's alt-screen/mouse-capture/etc. options,
-             TuiCommand base class): not yet published as a ${tamboui.version} release, only as a
-             snapshot from the sonatype-snapshots repository above, so pinned independently. -->
+             TuiCommand base class). -->
         <dependency>
             <groupId>dev.tamboui</groupId>
             <artifactId>tamboui-picocli</artifactId>
-            <version>0.4.0-SNAPSHOT</version>
         </dependency>
 
         <dependency>
@@ -115,15 +163,6 @@
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
     </dependencies>
 
@@ -150,6 +189,13 @@
                          users on the classpath. -->
                     <compilerArgs>
                         <arg>-Aproject=${project.groupId}/${project.artifactId}</arg>
+                        <!-- This app declares no dynamic-proxy interfaces, so picocli-codegen's
+                             proxy-config.json comes out empty ("[]") — but native-image still
+                             reads it and warns that DynamicProxyConfigurationResources is
+                             deprecated. Skip emitting the file rather than shipping an empty one.
+                             If dynamic proxies are ever needed, declare them in the reflection
+                             section of reachability-metadata.json instead of turning this back on. -->
+                        <arg>-Adisable.proxy.config=true</arg>
                     </compilerArgs>
                 </configuration>
             </plugin>

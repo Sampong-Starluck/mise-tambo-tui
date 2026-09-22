@@ -3,21 +3,25 @@ package com.sampong.tambo.tui.components;
 import static dev.tamboui.toolkit.Toolkit.column;
 import static dev.tamboui.toolkit.Toolkit.fill;
 import static dev.tamboui.toolkit.Toolkit.length;
-import static dev.tamboui.toolkit.Toolkit.list;
-import static dev.tamboui.toolkit.Toolkit.row;
-import static dev.tamboui.toolkit.Toolkit.spacer;
-import static dev.tamboui.toolkit.Toolkit.text;
+import static dev.tamboui.toolkit.Toolkit.panel;
+import static dev.tamboui.toolkit.Toolkit.table;
 
+import java.util.ArrayList;
 import java.util.List;
 
+import dev.tamboui.layout.Alignment;
 import dev.tamboui.style.Color;
-import dev.tamboui.toolkit.elements.Column;
-import dev.tamboui.toolkit.elements.ListElement;
+import dev.tamboui.style.Style;
+import dev.tamboui.toolkit.element.Element;
+import dev.tamboui.toolkit.elements.Panel;
+import dev.tamboui.toolkit.elements.TableElement;
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyEvent;
-import dev.tamboui.widgets.common.ScrollBarPolicy;
+import dev.tamboui.widgets.table.Cell;
+import dev.tamboui.widgets.table.Row;
+import dev.tamboui.widgets.table.TableState;
 
-import com.sampong.tambo.mise.model.MiseTask;
+import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo.tui.features.PanelFilter;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
@@ -27,95 +31,104 @@ import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
-/** Panel 4 — the project's mise tasks; Enter runs the selected one. */
+/**
+ * Panel 4 — the project's tasks; Enter runs the selected one.
+ * <p>
+ * Name and run state only. A task's description, dependencies, source file and the command it
+ * actually runs are all in {@link DetailPanel} one pane to the right, where the script has room
+ * to be read rather than truncated into a column.
+ */
 @RequiredArgsConstructor
 public final class TasksPanel {
 
     /**
-     * Width of the trailing description/status column. Kept modest: the sidebar
-     * is only 44 columns and the task name must stay readable. Constant width
-     * (see {@code Ui.fixedWidth}) so a shorter frame fully overwrites a longer
-     * one while a running task streams its live status.
-     */
-    private static final int TRAILING_WIDTH = 20;
-    /**
-     * Shown beside a running task instead of its latest output line. Streaming the
-     * build's own log here duplicated the command log, and a wide, fast-changing
-     * line made the whole row jitter — this panel only needs to say "still going".
+     * Shown beside a running task instead of its latest output line. Streaming the build's own
+     * log here duplicated the command log, and a wide, fast-changing line made the whole row
+     * jitter — this panel only needs to say "still going".
      */
     private static final String RUNNING_TEXT = "running…";
 
     @NonNull
     private final UiContext ctx;
     private final PanelFilter filter = new PanelFilter(PanelIds.TASKS_FILTER, PanelIds.TASKS);
-    private int index;
+    /** Selection and viewport offset — held here so they survive the per-frame element rebuild. */
+    private final TableState tableState = new TableState();
     private String lastQuery = "";
-    /** Horizontal pan of the trailing text, in columns; 0 = no pan (←/→, h/l). */
-    private int hScroll;
 
     /** The tasks currently shown — the full list, or the fuzzy-filtered view. */
-    private List<MiseTask> visibleItems() {
-        return filter.apply(ctx.state().tasks(), MiseTask::name, MiseTask::description);
+    private List<ProjectTask> visibleItems() {
+        return filter.apply(ctx.state().tasks(), ProjectTask::name, ProjectTask::description);
     }
 
     /** The task the selection sits on, or null when the (filtered) list is empty. */
-    public @Nullable MiseTask selected() {
-        List<MiseTask> items = visibleItems();
-        return items.isEmpty() ? null : items.get(Ui.clamp(index, items.size()));
+    public @Nullable ProjectTask selected() {
+        List<ProjectTask> items = visibleItems();
+        return items.isEmpty() ? null : items.get(selectedIndex(items.size()));
     }
 
-    public Column build() {
+    private int selectedIndex(int size) {
+        Integer selected = tableState.selected();
+        return Ui.clamp(selected == null ? 0 : selected, size);
+    }
+
+    public Panel build() {
         int total = ctx.state().tasks().size();
-        List<MiseTask> items = visibleItems();
+        List<ProjectTask> items = visibleItems();
 
         String query = filter.query();
         if (!query.equals(lastQuery)) {
             lastQuery = query;
-            index = 0;
+            tableState.select(0);
         }
-        index = Ui.clamp(index, items.size());
+        int index = items.isEmpty() ? 0 : selectedIndex(items.size());
+        tableState.select(index);
 
-        ListElement<?> list = list()
-                .title(title(total, items.size()))
-                .rounded().id(PanelIds.TASKS).focusable(ctx.modalOpen())
-                .borderColor(PanelIds.TASKS.equals(ctx.focusedId()) ? ctx.theme().focus() : ctx.theme().idle())
+        List<Row> rows = new ArrayList<>();
+        for (ProjectTask task : items) {
+            boolean busy = ctx.state().isBusy("task:" + task.name());
+            rows.add(Row.from(
+                    Cell.from((busy ? Ui.spinner() : "▷") + " " + task.name())
+                            .style(Style.create().fg(busy ? Color.YELLOW : Color.GREEN)),
+                    Cell.from(busy ? RUNNING_TEXT : Ui.nullToDash(task.description()))
+                            .style(Style.create().fg(busy ? Color.YELLOW : Color.DARK_GRAY))
+            ));
+        }
+
+        TableElement tableElement = table()
+                .widths(fill(2), fill(3))
+                .rows(rows)
+                .state(tableState)
                 .highlightColor(ctx.theme().accent())
-                .scrollbar(ScrollBarPolicy.AS_NEEDED)
-                .autoScroll()
-                .selected(index)
-                .onKeyEvent(event -> handleKey(event, items));
+                .highlightSymbol("> ")
+                .columnSpacing(1);
 
         if (items.isEmpty()) {
-            list.add(row(text(emptyText()).dim()));
-        } else {
-            for (MiseTask t : items) {
-                boolean busy = ctx.state().isBusy("task:" + t.name());
-                String trailing = busy ? RUNNING_TEXT : t.description() == null ? "" : t.description();
-                list.add(row(
-                        text((busy ? Ui.spinner() : "▷") + " ").fg(busy ? Color.YELLOW : Color.GREEN),
-                        text(t.name()).bold(),
-                        spacer(),
-                        // Leading space guarantees a gap from the name even when the
-                        // row overflows and the spacer collapses to zero. Fixed width
-                        // so a shorter frame fully overwrites a longer previous one
-                        // (no ghosting); ←/→ pans to read the rest.
-                        text(" " + Ui.fixedWidth(Ui.pan(trailing, hScroll), TRAILING_WIDTH))
-                                .fg(busy ? Color.YELLOW : Color.DARK_GRAY).dim()
-                ));
-            }
+            tableElement.row(Row.from(Cell.from(emptyText()).style(Style.create().gray())));
         }
 
-        if (filter.isActive()) {
-            return column(filter.inputRow(ctx).constraint(length(1)), list.constraint(fill()));
+        Element body = filter.isActive()
+                ? column(filter.inputRow(ctx).constraint(length(1)), tableElement.constraint(fill()))
+                : column(tableElement.constraint(fill()));
+
+        Panel block = panel(SidePanels.title(SidePanels.Side.TASKS, countLabel(total, items.size())), body)
+                .rounded()
+                .id(PanelIds.TASKS).focusable(ctx.modalOpen())
+                .borderColor(ctx.theme().idle())
+                .focusedBorderColor(ctx.theme().focus())
+                .onKeyEvent(event -> handleKey(event, items));
+
+        String position = SidePanels.positionLabel(index, items.size());
+        if (!position.isEmpty() && PanelIds.TASKS.equals(ctx.focusedId())) {
+            block.bottomTitle(position).bottomTitleAlignment(Alignment.RIGHT);
         }
-        return column(list.constraint(fill()));
+        return block;
     }
 
-    private String title(int total, int shown) {
+    private String countLabel(int total, int shown) {
         if (total == 0) {
-            return "[4] Tasks";
+            return "";
         }
-        return filter.isActive() ? "[4] Tasks (" + shown + "/" + total + ")" : "[4] Tasks (" + total + ")";
+        return filter.isActive() ? "(" + shown + "/" + total + ")" : "(" + total + ")";
     }
 
     private String emptyText() {
@@ -127,9 +140,8 @@ public final class TasksPanel {
                 : "Loading…";
     }
 
-    private EventResult handleKey(KeyEvent event, List<MiseTask> items) {
-        if (Ui.isNavKey(event)) {
-            index = Ui.applyNav(event, index, items.size());
+    private EventResult handleKey(KeyEvent event, List<ProjectTask> items) {
+        if (Ui.applyTableNav(event, tableState, items.size())) {
             return EventResult.HANDLED;
         }
         if (event.isChar('/')) {
@@ -140,10 +152,6 @@ public final class TasksPanel {
             filter.clear(ctx);
             return EventResult.HANDLED;
         }
-        if (Ui.isPanKey(event)) {
-            hScroll = Ui.applyHPan(event, hScroll);
-            return EventResult.HANDLED;
-        }
         if (event.isChar('.')) {
             ctx.actions().reRunLastTask();
             return EventResult.HANDLED;
@@ -151,7 +159,7 @@ public final class TasksPanel {
         if (items.isEmpty()) {
             return EventResult.UNHANDLED;
         }
-        MiseTask task = items.get(Ui.clamp(index, items.size()));
+        ProjectTask task = items.get(selectedIndex(items.size()));
         if (event.isConfirm()) {
             ctx.actions().runTask(task);
             return EventResult.HANDLED;

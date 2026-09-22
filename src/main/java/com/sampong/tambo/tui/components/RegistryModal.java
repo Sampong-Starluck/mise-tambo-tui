@@ -18,8 +18,10 @@ import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
 
-import com.sampong.tambo.mise.model.RegistryEntry;
-import com.sampong.tambo.mise.model.ToolVersion;
+import com.sampong.tambo._common.model.BackendFeature;
+import com.sampong.tambo._common.model.CatalogEntry;
+import com.sampong.tambo._common.model.SdkRelease;
+import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo.tui.features.Fuzzy;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.PanelIds;
@@ -35,14 +37,13 @@ import lombok.RequiredArgsConstructor;
  * The "Add SDK" modal: step 1 fuzzy-finds a tool by typing into a real input box, step 2
  * fuzzy-finds the version the same way. Esc steps back.
  * <p>
- * Step 1's source differs by backend: mise browses the full {@code mise registry} catalog,
- * since mise tools are always added implicitly through this flow. vfox instead lists only
- * plugins already added (i.e. present in {@code vfox list}) — browsing the full catalog to
- * register a new plugin is the separate {@code P} "add plugin" flow's job; this modal is
- * "install another version of a plugin you already have". Behavior also forks on step 2:
- * mise's Enter runs {@code mise use} (install + pin; Ctrl+G toggles local/global), vfox's
- * Enter only runs {@code vfox install} — already-installed versions are marked, and pinning
- * stays a separate step in the Tools panel.
+ * Both steps are the same for either backend; what differs is declared, not branched on.
+ * A backend with its own plugin registry (BackendFeature.PLUGIN_REGISTRY) already has a
+ * separate flow for registering plugins, so step 1 here is scoped to SDKs already added and
+ * this modal means "install another version of one you have"; a backend without one browses
+ * its whole catalog, since that is the only way in. Step 2 then either installs and pins in
+ * one go (BackendFeature.PIN_ON_INSTALL, with Ctrl+G choosing the scope) or installs only,
+ * leaving pinning to the Tools panel.
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
@@ -63,19 +64,19 @@ public final class RegistryModal {
     private final TextInputState search = new TextInputState();
     private String lastQuery = "";
     private int index;
-    private @Nullable RegistryEntry tool;
-    private List<String> remoteVersions = List.of();
+    private @Nullable CatalogEntry tool;
+    private List<SdkRelease> releases = List.of();
     private boolean versionsLoading;
     private boolean installGlobal;
     private @Nullable String preOpenFocus;
 
     public void open() {
-        // The registry (mise's ~200 KB of JSON, or vfox's `available` catalog) is fetched
-        // here on first open rather than at startup — a session that never adds an SDK never
-        // pays for it at all. Reopening after a failed fetch is the user asking to try again;
-        // a loaded registry is reused, since nothing done locally changes what's installable.
-        ctx.state().registryLazy().retryIfFailed();
-        ctx.actions().ensureRegistry();
+        // The catalog (mise's ~200 KB of JSON, or vfox's `available` listing) is fetched here
+        // on first open rather than at startup — a session that never adds an SDK never pays for
+        // it at all. Reopening after a failed fetch is the user asking to try again; a loaded
+        // catalog is reused, since nothing done locally changes what is installable.
+        ctx.state().catalogLazy().retryIfFailed();
+        ctx.actions().ensureCatalog();
         preOpenFocus = ctx.focusedId();
         open = true;
         step = Step.TOOL;
@@ -83,7 +84,7 @@ public final class RegistryModal {
         lastQuery = "";
         index = 0;
         tool = null;
-        remoteVersions = List.of();
+        releases = List.of();
         versionsLoading = false;
         installGlobal = false;
         ctx.focus(PanelIds.MODAL_INPUT);
@@ -98,15 +99,25 @@ public final class RegistryModal {
 
     /** The context-sensitive hint line the footer shows while the modal is open. */
     public String footerHint() {
-        boolean vfox = ctx.state().vfox();
         if (step == Step.TOOL) {
-            return vfox
-                    ? "type to fuzzy find   ↑/↓ select   enter choose plugin   esc close"
-                    : "type to fuzzy find   ↑/↓ select   enter choose sdk   esc close";
+            return "type to fuzzy find   ↑/↓ select   enter choose " + (scopedToAdded() ? "plugin" : "sdk")
+                    + "   esc close";
         }
-        return vfox
-                ? "type to fuzzy find   ↑/↓ select   enter install   esc back"
-                : "type to fuzzy find   ↑/↓ select   enter install   ctrl+g local/global   esc back";
+        return "type to fuzzy find   ↑/↓ select   enter install"
+                + (pinsOnInstall() ? "   ctrl+g local/global" : "") + "   esc back";
+    }
+
+    /**
+     * True when step 1 lists only SDKs already added rather than the whole catalog — the case
+     * for a backend whose catalog is reached through its own plugin-registry flow instead.
+     */
+    private boolean scopedToAdded() {
+        return ctx.supports(BackendFeature.PLUGIN_REGISTRY);
+    }
+
+    /** True when choosing a version can pin it as well as install it. */
+    private boolean pinsOnInstall() {
+        return ctx.supports(BackendFeature.PIN_ON_INSTALL);
     }
 
     // ==================== Rendering ====================
@@ -125,41 +136,40 @@ public final class RegistryModal {
             buildVersionStep(content, query);
         }
 
-        boolean vfox = ctx.state().vfox();
         content.add(text(""));
         content.add(text(step == Step.TOOL
-                ? (vfox ? "enter choose plugin   esc close" : "enter choose SDK   esc close")
-                : (vfox ? "enter install   esc back" : "enter install   ctrl+g toggle local/global   esc back")).dim());
+                ? "enter choose " + (scopedToAdded() ? "plugin" : "SDK") + "   esc close"
+                : "enter install" + (pinsOnInstall() ? "   ctrl+g toggle local/global" : "") + "   esc back")
+                .dim());
 
-        String title = vfox
-                ? "Add SDK — added plugins (" + addedVfoxPlugins().size() + ")"
-                : "Add SDK — registry (" + ctx.state().registry().size() + ")";
+        String title = scopedToAdded()
+                ? "Add SDK — added plugins (" + addedSdks().size() + ")"
+                : "Add SDK — catalog (" + ctx.state().catalog().size() + ")";
         return dialog(title, content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
     }
 
     private void buildToolStep(List<Element> content, String query) {
-        boolean vfox = ctx.state().vfox();
-        List<RegistryEntry> matches = fuzzyTools(query);
+        List<CatalogEntry> matches = fuzzySdks(query);
         index = Ui.clamp(index, matches.size());
 
-        content.add(searchInputRow("Search SDK", vfox
+        content.add(searchInputRow("Search SDK", scopedToAdded()
                 ? "type to fuzzy find an added plugin"
                 : "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
-        if (vfox) {
-            if (addedVfoxPlugins().isEmpty()) {
+        if (scopedToAdded()) {
+            if (addedSdks().isEmpty()) {
                 content.add(text("No plugins added yet — press P to add one from the catalog").dim());
             } else if (matches.isEmpty()) {
                 content.add(text("No plugin matches \"" + query + "\"").dim());
             } else {
                 addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
             }
-        } else if (ctx.state().registry().isEmpty()) {
-            Lazy<List<RegistryEntry>> registry = ctx.state().registryLazy();
-            content.add(text(registry.everLoaded() || registry.failed()
-                    ? "Registry unavailable"
-                    : "Loading registry…").dim());
+        } else if (ctx.state().catalog().isEmpty()) {
+            Lazy<List<CatalogEntry>> catalog = ctx.state().catalogLazy();
+            content.add(text(catalog.everLoaded() || catalog.failed()
+                    ? "Catalog unavailable"
+                    : "Loading catalog…").dim());
         } else if (matches.isEmpty()) {
             content.add(text("No SDK matches \"" + query + "\"").dim());
         } else {
@@ -167,35 +177,33 @@ public final class RegistryModal {
         }
     }
 
-    private Element toolRow(List<RegistryEntry> matches, int i) {
-        RegistryEntry e = matches.get(i);
+    private Element toolRow(List<CatalogEntry> matches, int i) {
+        CatalogEntry e = matches.get(i);
         boolean sel = i == index;
         return row(
                 text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
-                sel ? text(e.shortName()).bold().cyan() : text(e.shortName()).bold(),
+                sel ? text(e.name()).bold().cyan() : text(e.name()).bold(),
                 spacer(),
                 text(Ui.truncate(Ui.nullToDash(e.description()), 40) + " ").dim()
         );
     }
 
     private void buildVersionStep(List<Element> content, String query) {
-        boolean vfox = ctx.state().vfox();
-        List<String> matches = Fuzzy.filter(query, remoteVersions, v -> v, null);
+        List<SdkRelease> matches = matchingReleases(query);
         index = Ui.clamp(index, matches.size());
 
-        if (vfox) {
-            // Selecting a version here only installs it (see confirmVersion) — vfox's
-            // install has no local/global scope, so there is nothing to toggle.
-            assert tool != null;
+        assert tool != null;
+        if (!pinsOnInstall()) {
+            // Selecting a version here only installs it (see confirmVersion) — this backend's
+            // install carries no scope, so there is nothing to toggle.
             content.add(row(
                     text("Plugin ").dim(),
-                    text(tool.shortName()).bold().cyan()
+                    text(tool.name()).bold().cyan()
             ));
         } else {
-            assert tool != null;
             content.add(row(
                     text("SDK ").dim(),
-                    text(tool.shortName()).bold().cyan(),
+                    text(tool.name()).bold().cyan(),
                     spacer(),
                     text("target: ").dim(),
                     installGlobal ? text("global (ctrl+g)").yellow() : text("this directory (ctrl+g)").green()
@@ -204,31 +212,28 @@ public final class RegistryModal {
         content.add(searchInputRow("Search version", "type to fuzzy find a version"));
         content.add(text(""));
         if (versionsLoading) {
-            String via = vfox ? "vfox search " + tool.shortName() + " all" : "mise ls-remote " + tool.shortName();
-            content.add(text("Fetching versions via " + via + "…").dim());
+            content.add(text("Fetching versions of " + tool.name() + " from "
+                    + ctx.backend().name() + "…").dim());
         } else if (matches.isEmpty()) {
             content.add(text("No version matches \"" + query + "\"").dim());
         } else {
             addWindowedRows(content, matches.size(), i -> {
-                String v = matches.get(i);
+                SdkRelease r = matches.get(i);
                 boolean sel = i == index;
-                boolean installed = vfox && isVersionInstalled(Objects.requireNonNull(tool).shortName(), v);
+                String label = r.latest() ? r.version() + "  (newest)" : r.version();
                 return row(
                         text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
-                        sel ? text(v).bold().cyan() : text(v),
+                        sel ? text(label).bold().cyan() : text(label),
                         spacer(),
-                        installed ? text("installed ").fg(Color.GREEN).dim() : text("")
+                        r.installed() ? text("installed ").fg(Color.GREEN).dim() : text("")
                 );
             });
         }
     }
 
-    /** Whether {@code version} (as returned by {@code vfox search ... all}) is already installed for {@code toolName}. */
-    private boolean isVersionInstalled(String toolName, String version) {
-        String normalized = (version.startsWith("v") || version.startsWith("V"))
-                ? version.substring(1) : version;
-        return ctx.state().tools().stream()
-                .anyMatch(t -> t.tool().equalsIgnoreCase(toolName) && t.version().equals(normalized));
+    /** Fuzzy-matches the fetched releases by version string. */
+    private List<SdkRelease> matchingReleases(String query) {
+        return Fuzzy.filter(query, releases, SdkRelease::version, null);
     }
 
     /** The typed input box shared by both steps; owns all modal key handling. */
@@ -255,34 +260,29 @@ public final class RegistryModal {
         content.add(hidden > 0 ? text("… " + hidden + " more (keep typing to narrow)").dim() : text(""));
     }
 
-    private List<RegistryEntry> fuzzyTools(String query) {
-        // mise browses the full catalog; vfox is scoped to plugins already added (see
-        // addedVfoxPlugins) — the full vfox catalog lives in the separate P "add plugin" flow.
-        // Match on the short name first, then fall back to description + backends so typing a
-        // backend (e.g. "cargo", "npm", "ubi") narrows the mise list too; vfox entries carry no
-        // backends (see VfoxSdkBackend#listAvailable), so backendSummary() is just a harmless
-        // "-" there.
-        List<RegistryEntry> source = ctx.state().vfox() ? addedVfoxPlugins() : ctx.state().registry();
-        return Fuzzy.filter(query, source, RegistryEntry::shortName,
-                e -> Ui.nullToDash(e.description()) + " " + e.backendSummary());
+    private List<CatalogEntry> fuzzySdks(String query) {
+        // Match on the name first, then fall back to the description and install methods, so
+        // typing one of those (e.g. "cargo", "npm", "ubi") narrows the list too. A backend that
+        // reports no install methods contributes a harmless "-" to that second field.
+        List<CatalogEntry> source = scopedToAdded() ? addedSdks() : ctx.state().catalog();
+        return Fuzzy.filter(query, source, CatalogEntry::name, CatalogEntry::searchableDetail);
     }
 
     /**
-     * vfox only: the plugins the user already has, derived from {@code vfox list} (i.e.
-     * {@link com.sampong.tambo.tui.state.UiState#tools()}) rather than the full catalog.
-     * Enriches with the catalog's description when a match is available (registry may not
-     * have loaded yet, or the plugin may not be in the official catalog at all — either way
-     * that's cosmetic only, so a bare entry is a fine fallback).
+     * The SDKs the user already has, derived from the installed listing rather than the full
+     * catalog. Enriches each with the catalog's description when one is available (the catalog
+     * may not have loaded yet, or the SDK may not be in it at all — either way that is
+     * cosmetic, so a bare entry is a fine fallback).
      */
-    private List<RegistryEntry> addedVfoxPlugins() {
-        Map<String, RegistryEntry> byName = ctx.state().registry().stream()
-                .collect(Collectors.toMap(e -> e.shortName().toLowerCase(Locale.ROOT), e -> e, (a, b) -> a));
-        return ctx.state().tools().stream()
-                .map(ToolVersion::tool)
+    private List<CatalogEntry> addedSdks() {
+        Map<String, CatalogEntry> byName = ctx.state().catalog().stream()
+                .collect(Collectors.toMap(e -> e.name().toLowerCase(Locale.ROOT), e -> e, (a, b) -> a));
+        return ctx.state().sdks().stream()
+                .map(SdkVersion::name)
                 .distinct()
                 .sorted(String.CASE_INSENSITIVE_ORDER)
                 .map(name -> byName.getOrDefault(name.toLowerCase(Locale.ROOT),
-                        new RegistryEntry(name, null, null, null)))
+                        CatalogEntry.of(name, null)))
                 .toList();
     }
 
@@ -295,8 +295,8 @@ public final class RegistryModal {
      */
     private EventResult handleKey(KeyEvent event) {
         int total = step == Step.TOOL
-                ? fuzzyTools(search.text()).size()
-                : Fuzzy.filter(search.text(), remoteVersions, v -> v, null).size();
+                ? fuzzySdks(search.text()).size()
+                : matchingReleases(search.text()).size();
 
         if (event.isCancel()) {
             if (step == Step.VERSION) {
@@ -339,7 +339,7 @@ public final class RegistryModal {
         search.clear();
         lastQuery = "";
         index = 0;
-        remoteVersions = List.of();
+        releases = List.of();
         versionsLoading = false;
     }
 
@@ -352,7 +352,7 @@ public final class RegistryModal {
     }
 
     private void confirmTool() {
-        List<RegistryEntry> matches = fuzzyTools(search.text());
+        List<CatalogEntry> matches = fuzzySdks(search.text());
         if (matches.isEmpty()) {
             return;
         }
@@ -360,7 +360,7 @@ public final class RegistryModal {
     }
 
     /**
-     * Opens straight at the version step for an already-registered vfox plugin, skipping the
+     * Opens straight at the version step for an already-registered SDK, skipping the
      * plugin-picking step — the Tools panel's "install" action for a plugin that has no
      * version installed yet. The catalog is still fetched, since {@link #build()} reads it,
      * but the entry is synthesised from the name so this works even for a plugin added by
@@ -368,23 +368,23 @@ public final class RegistryModal {
      */
     public void openAtVersion(String toolName) {
         open();
-        enterVersionStep(new RegistryEntry(toolName, null, null, null));
+        enterVersionStep(CatalogEntry.of(toolName, null));
     }
 
-    private void enterVersionStep(RegistryEntry entry) {
+    private void enterVersionStep(CatalogEntry entry) {
         tool = entry;
         step = Step.VERSION;
         search.clear();
         lastQuery = "";
         index = 0;
-        remoteVersions = List.of();
+        releases = List.of();
         versionsLoading = true;
 
-        String toolName = tool.shortName();
-        ctx.actions().fetchRemoteVersions(toolName, versions -> {
+        String toolName = tool.name();
+        ctx.actions().fetchReleases(toolName, fetched -> {
             // Ignore stale responses if the user already left the version step.
-            if (open && step == Step.VERSION && tool != null && toolName.equals(tool.shortName())) {
-                remoteVersions = versions;
+            if (open && step == Step.VERSION && tool != null && toolName.equals(tool.name())) {
+                releases = fetched;
                 versionsLoading = false;
             }
         });
@@ -394,20 +394,20 @@ public final class RegistryModal {
         if (versionsLoading) {
             return;
         }
-        List<String> matches = Fuzzy.filter(search.text(), remoteVersions, v -> v, null);
+        List<SdkRelease> matches = matchingReleases(search.text());
         if (matches.isEmpty()) {
             return;
         }
-        String version = matches.get(Ui.clamp(index, matches.size()));
+        String version = matches.get(Ui.clamp(index, matches.size())).version();
         assert tool != null;
-        String shortName = tool.shortName();
+        String shortName = tool.name();
         close();
-        if (ctx.state().vfox()) {
-            // vfox: this modal only installs a version — pinning it (project/global "use")
-            // stays a separate step in the Tools panel ('u'/'g'), same as any other install.
-            ctx.actions().installTool(new ToolVersion(shortName, version, null, null, null, null, false, false));
+        if (pinsOnInstall()) {
+            ctx.actions().useSdk(shortName + "@" + version, installGlobal);
         } else {
-            ctx.actions().useTool(shortName + "@" + version, installGlobal);
+            // This backend installs without pinning — pinning (project/global "use") stays a
+            // separate step in the Tools panel (u / g), same as any other install.
+            ctx.actions().installSdk(new SdkVersion(shortName, version, null, null, null, null, false, false));
         }
     }
 }

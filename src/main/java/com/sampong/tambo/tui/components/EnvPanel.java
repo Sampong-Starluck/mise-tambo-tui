@@ -3,41 +3,59 @@ package com.sampong.tambo.tui.components;
 import static dev.tamboui.toolkit.Toolkit.column;
 import static dev.tamboui.toolkit.Toolkit.fill;
 import static dev.tamboui.toolkit.Toolkit.length;
-import static dev.tamboui.toolkit.Toolkit.list;
-import static dev.tamboui.toolkit.Toolkit.row;
-import static dev.tamboui.toolkit.Toolkit.text;
+import static dev.tamboui.toolkit.Toolkit.panel;
+import static dev.tamboui.toolkit.Toolkit.table;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import dev.tamboui.layout.Alignment;
 import dev.tamboui.style.Color;
-import dev.tamboui.toolkit.elements.Column;
-import dev.tamboui.toolkit.elements.ListElement;
+import dev.tamboui.style.Style;
+import dev.tamboui.toolkit.element.Element;
+import dev.tamboui.toolkit.elements.Panel;
+import dev.tamboui.toolkit.elements.TableElement;
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyEvent;
-import dev.tamboui.widgets.common.ScrollBarPolicy;
+import dev.tamboui.widgets.table.Cell;
+import dev.tamboui.widgets.table.Row;
+import dev.tamboui.widgets.table.TableState;
 
 import com.sampong.tambo.tui.features.Clipboard;
-import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.features.PanelFilter;
+import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
-/** Panel 3 — the environment variables mise would export in this directory. */
+/**
+ * Panel 3 — the environment variables the backend would export in this directory.
+ * <p>
+ * The list carries the name and as much of the value as the sidebar can spare; the whole value,
+ * wrapped, is one pane to the right in {@link DetailPanel}. That split is what finally makes a
+ * {@code PATH} readable here — it is the one value in this app that is routinely longer than any
+ * terminal is wide, and clipping it in a column, panning it sideways and wrapping it in a narrow
+ * panel had all been tried and all been worse than simply giving it the big pane.
+ */
 @RequiredArgsConstructor
 public final class EnvPanel {
 
     @NonNull
     private final UiContext ctx;
     private final PanelFilter filter = new PanelFilter(PanelIds.ENV_FILTER, PanelIds.ENV);
-    private int index;
+    /** Selection and viewport offset — held here so they survive the per-frame element rebuild. */
+    private final TableState tableState = new TableState();
     private String lastQuery = "";
-    /** Horizontal pan of the value text, in columns; 0 = no pan (←/→, h/l). */
-    private int hScroll;
+
+    private int selectedIndex(int size) {
+        Integer selected = tableState.selected();
+        return Ui.clamp(selected == null ? 0 : selected, size);
+    }
 
     /** The env entries currently shown — all of them, or the fuzzy-filtered view. */
     private List<Map.Entry<String, String>> visibleItems() {
@@ -45,45 +63,67 @@ public final class EnvPanel {
         return filter.apply(all, Map.Entry::getKey, Map.Entry::getValue);
     }
 
-    public Column build() {
+    /** The variable the selection sits on, or null when the (filtered) list is empty. */
+    public Map.@Nullable Entry<String, String> selected() {
+        List<Map.Entry<String, String>> entries = visibleItems();
+        return entries.isEmpty() ? null : entries.get(selectedIndex(entries.size()));
+    }
+
+    public Panel build() {
         int total = ctx.state().env().size();
         List<Map.Entry<String, String>> entries = visibleItems();
 
         String query = filter.query();
         if (!query.equals(lastQuery)) {
             lastQuery = query;
-            index = 0;
+            tableState.select(0);
         }
-        index = Ui.clamp(index, entries.size());
+        int index = entries.isEmpty() ? 0 : selectedIndex(entries.size());
+        tableState.select(index);
 
-        ListElement<?> list = list()
-                .title(title(total, entries.size()))
-                .rounded().id(PanelIds.ENV).focusable(ctx.modalOpen())
-                .borderColor(PanelIds.ENV.equals(ctx.focusedId()) ? ctx.theme().focus() : ctx.theme().idle())
+        List<Row> rows = new ArrayList<>();
+        for (Map.Entry<String, String> e : entries) {
+            rows.add(Row.from(
+                    Cell.from(e.getKey()).style(Style.create().fg(Color.YELLOW)),
+                    Cell.from(e.getValue()).style(Style.create().gray())
+            ));
+        }
+
+        TableElement tableElement = table()
+                .widths(fill(2), fill(3))
+                .rows(rows)
+                .state(tableState)
                 .highlightColor(ctx.theme().accent())
-                .scrollbar(ScrollBarPolicy.AS_NEEDED)
-                .autoScroll()
-                .selected(index)
-                .onKeyEvent(event -> handleKey(event, entries));
+                .highlightSymbol("> ")
+                .columnSpacing(1);
 
         if (entries.isEmpty()) {
-            list.add(row(text(emptyText()).dim()));
-        } else {
-            for (Map.Entry<String, String> e : entries) {
-                // ←/→ pans the value: PATH-like entries are far wider than the sidebar.
-                list.add(row(text(e.getKey() + "=").fg(Color.YELLOW),
-                        text(Ui.truncate(Ui.pan(e.getValue(), hScroll), 60)).dim()));
-            }
+            tableElement.row(Row.from(Cell.from(emptyText()).style(Style.create().gray())));
         }
 
-        if (filter.isActive()) {
-            return column(filter.inputRow(ctx).constraint(length(1)), list.constraint(fill()));
+        Element body = filter.isActive()
+                ? column(filter.inputRow(ctx).constraint(length(1)), tableElement.constraint(fill()))
+                : column(tableElement.constraint(fill()));
+
+        Panel block = panel(SidePanels.title(SidePanels.Side.ENV, countLabel(total, entries.size())), body)
+                .rounded()
+                .id(PanelIds.ENV).focusable(ctx.modalOpen())
+                .borderColor(ctx.theme().idle())
+                .focusedBorderColor(ctx.theme().focus())
+                .onKeyEvent(event -> handleKey(event, entries));
+
+        String position = SidePanels.positionLabel(index, entries.size());
+        if (!position.isEmpty() && PanelIds.ENV.equals(ctx.focusedId())) {
+            block.bottomTitle(position).bottomTitleAlignment(Alignment.RIGHT);
         }
-        return column(list.constraint(fill()));
+        return block;
     }
 
-    private String title(int total, int shown) {
-        return filter.isActive() ? "[3] Env (" + shown + "/" + total + ")" : "[3] Env (" + total + ")";
+    private String countLabel(int total, int shown) {
+        if (total == 0) {
+            return "";
+        }
+        return filter.isActive() ? "(" + shown + "/" + total + ")" : "(" + total + ")";
     }
 
     private String emptyText() {
@@ -96,8 +136,7 @@ public final class EnvPanel {
     }
 
     private EventResult handleKey(KeyEvent event, List<Map.Entry<String, String>> entries) {
-        if (Ui.isNavKey(event)) {
-            index = Ui.applyNav(event, index, entries.size());
+        if (Ui.applyTableNav(event, tableState, entries.size())) {
             return EventResult.HANDLED;
         }
         if (event.isChar('/')) {
@@ -108,12 +147,8 @@ public final class EnvPanel {
             filter.clear(ctx);
             return EventResult.HANDLED;
         }
-        if (Ui.isPanKey(event)) {
-            hScroll = Ui.applyHPan(event, hScroll);
-            return EventResult.HANDLED;
-        }
         if (event.isChar('y') && !entries.isEmpty()) {
-            Map.Entry<String, String> e = entries.get(Ui.clamp(index, entries.size()));
+            Map.Entry<String, String> e = entries.get(selectedIndex(entries.size()));
             Clipboard.copy(e.getValue());
             ctx.state().addLog(LogLevel.OK, "Copied " + e.getKey() + " value to clipboard");
             return EventResult.HANDLED;

@@ -10,10 +10,18 @@ import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.widgets.table.TableState;
 
 import org.jspecify.annotations.Nullable;
 
-/** Small stateless rendering / navigation helpers shared by all panels. */
+/**
+ * Small stateless rendering / navigation helpers shared by all panels.
+ * <p>
+ * Smaller than it was: the table-backed panels let TamboUI own the viewport and the column
+ * layout, so the hand-rolled horizontal panning and row padding they once needed are gone.
+ * What remains is what no widget provides — clamping, word wrapping, and the list navigation
+ * the two genuinely list-shaped surfaces (the command log and the Advanced menu) still use.
+ */
 public final class Ui {
 
     private Ui() {
@@ -60,32 +68,37 @@ public final class Ui {
         return current;
     }
 
-    /** Returns true for the keys {@link #applyHPan} knows how to handle: ←/→ and h/l. */
-    public static boolean isPanKey(KeyEvent e) {
-        return e.code() == KeyCode.LEFT || e.code() == KeyCode.RIGHT || e.isChar('h') || e.isChar('l');
+    /**
+     * Drives a {@link TableState} from a navigation keypress, returning true when the key was
+     * one. The table widget owns the viewport and keeps the cursor visible, so unlike
+     * {@link #applyNav} this only has to move the selection — there is no offset to track and
+     * no window to compute by hand.
+     */
+    public static boolean applyTableNav(KeyEvent event, TableState state, int size) {
+        if (size <= 0) {
+            return isNavKey(event);
+        }
+        int current = clamp(state.selected() == null ? 0 : state.selected(), size);
+        if (event.code() == KeyCode.UP || event.isChar('k')) {
+            state.select(clamp(current - 1, size));
+        } else if (event.code() == KeyCode.DOWN || event.isChar('j')) {
+            state.select(clamp(current + 1, size));
+        } else if (event.code() == KeyCode.HOME) {
+            state.select(0);
+        } else if (event.code() == KeyCode.END) {
+            state.select(size - 1);
+        } else if (event.code() == KeyCode.PAGE_UP) {
+            state.select(clamp(current - PAGE, size));
+        } else if (event.code() == KeyCode.PAGE_DOWN) {
+            state.select(clamp(current + PAGE, size));
+        } else {
+            return false;
+        }
+        return true;
     }
 
-    /** Applies horizontal panning (←/→, h/l) to a column offset, 8 columns per step. */
-    public static int applyHPan(KeyEvent event, int current) {
-        if (event.code() == KeyCode.LEFT || event.isChar('h')) {
-            return Math.max(0, current - 8);
-        }
-        if (event.code() == KeyCode.RIGHT || event.isChar('l')) {
-            return Math.min(current + 8, 512);
-        }
-        return current;
-    }
-
-    /** Drops the first {@code offset} characters — the horizontal pan applied to row text. */
-    public static String pan(@Nullable String s, int offset) {
-        if (s == null) {
-            return "";
-        }
-        if (offset <= 0) {
-            return s;
-        }
-        return offset >= s.length() ? "" : s.substring(offset);
-    }
+    /** Rows a page key moves by. */
+    private static final int PAGE = 10;
 
     /** Renders a boolean as a colored yes/no badge. */
     public static Element badge(boolean value) {
@@ -142,6 +155,36 @@ public final class Ui {
      * plain lines they add as separate elements instead, which renders correctly everywhere
      * else in this app. A single word longer than {@code width} is kept whole rather than cut.
      */
+    /**
+     * Breaks {@code text} into {@code width}-column chunks at exactly the column, with no regard
+     * for word boundaries. For values that are not prose and have no spaces to break on — an
+     * environment variable's value above all — where {@link #wordWrap} would keep the whole
+     * thing as one over-long "word" and let the renderer clip everything past the first line.
+     */
+    public static List<String> hardWrap(String text, int width) {
+        if (width <= 0) {
+            return List.of(text);
+        }
+        List<String> lines = new ArrayList<>();
+        for (int at = 0; at < text.length(); at += width) {
+            lines.add(text.substring(at, Math.min(text.length(), at + width)));
+        }
+        return lines.isEmpty() ? List.of("") : lines;
+    }
+
+    /**
+     * Wraps a value that may be a {@code PATH}-style list: one entry per line when it is, since
+     * that is how such a value is actually read, and a plain {@link #hardWrap} otherwise. An
+     * entry longer than {@code width} is itself hard-wrapped rather than clipped.
+     */
+    public static List<String> wrapValue(String value, int width) {
+        List<String> lines = new ArrayList<>();
+        for (String part : value.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator))) {
+            lines.addAll(hardWrap(part, width));
+        }
+        return lines;
+    }
+
     public static List<String> wordWrap(String text, int width) {
         List<String> lines = new ArrayList<>();
         StringBuilder line = new StringBuilder();

@@ -5,7 +5,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.AsyncTaskExecutor;
-import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.core.task.support.TaskExecutorAdapter;
+
+import java.util.concurrent.Executors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -27,15 +29,27 @@ public class AppConfig {
     }
 
     /**
-     * Virtual-thread executor for background {@code mise} subprocess calls: each
-     * blocking CLI invocation gets a cheap virtual thread instead of pinning a
-     * pooled platform thread.
+     * Virtual-thread executor for every background subprocess call: each blocking CLI
+     * invocation, and each of the two stream readers it needs, gets a cheap virtual thread
+     * instead of pinning a pooled platform thread.
+     * <p>
+     * {@link Executors#newVirtualThreadPerTaskExecutor()} rather than a
+     * {@code SimpleAsyncTaskExecutor} with virtual threads switched on: the work here is
+     * entirely blocking I/O on subprocess pipes, so there is nothing for that class's
+     * concurrency-limit gate and lifecycle bookkeeping to do, and the JDK executor is the
+     * direct expression of one virtual thread per blocking call.
+     * <p>
+     * Deliberately unbounded. A concurrency cap would only queue subprocess launches behind
+     * each other, which is the exact latency this exists to avoid — and the real limit is the
+     * user, who can start a handful of installs at most.
+     * <p>
+     * Being an {@code Executor} bean, this also suppresses Spring Boot's auto-configured
+     * {@code applicationTaskExecutor} (which backs off on {@code @ConditionalOnMissingBean}),
+     * so there is exactly one executor in the context and injection by type is unambiguous.
      */
     @Bean
     AsyncTaskExecutor miseTaskExecutor() {
-        SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor("mise-");
-        executor.setVirtualThreads(true);
-        return executor;
+        return new TaskExecutorAdapter(Executors.newVirtualThreadPerTaskExecutor());
     }
 
     @Bean

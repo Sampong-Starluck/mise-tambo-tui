@@ -3,14 +3,21 @@ package com.sampong.tambo.tui.components;
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.length;
 import static dev.tamboui.toolkit.Toolkit.row;
+import static dev.tamboui.toolkit.Toolkit.spacer;
 import static dev.tamboui.toolkit.Toolkit.text;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.IntSupplier;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
+import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
+import dev.tamboui.tui.event.MouseEventKind;
 
+import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo.tui.state.UiContext;
 
 import lombok.Getter;
@@ -19,19 +26,66 @@ import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
-/** The {@code ?} key-reference overlay; remembers and restores focus around itself. */
+/**
+ * The {@code ?} key reference: every key the app binds, grouped by where it applies, plus the
+ * launch flags and config notes that don't belong to any one panel. Remembers and restores
+ * focus around itself.
+ * <p>
+ * The full reference is far longer than any terminal, so this scrolls: ↑/↓ or j/k by a line,
+ * PgUp/PgDn by a screen, Home/End to the ends, and the mouse wheel. The window is sized from
+ * the live terminal height and the dialog from its width, so the text is never cut off at
+ * either edge — long descriptions are wrapped by hand with {@link Ui#wordWrap} for the same
+ * reason that helper exists at all (see its javadoc). Like {@link ConfirmModal} it has no
+ * focusable element of its own, so {@code GlobalKeyBindings} feeds it keys and wheel events.
+ */
 @RequiredArgsConstructor
 public final class HelpOverlay {
 
+    /** Width of the bolded key column, wide enough for the longest label ({@code Tab / Shift+Tab}). */
+    private static final int KEY_WIDTH = 17;
+    /**
+     * The launch-flag section gets its own, wider column: {@code --advanced-features} is longer
+     * than {@link #KEY_WIDTH} and would otherwise be clipped by its own length constraint.
+     */
+    private static final int FLAG_WIDTH = 21;
+    /** Border + padding the dialog spends on each side, deducted before wrapping descriptions. */
+    private static final int DIALOG_CHROME_COLUMNS = 4;
+    /** Rows the dialog spends on its own border, the sticky footer, and the app's header/footer. */
+    private static final int CHROME_ROWS = 9;
+    private static final int MIN_ROWS = 6;
+    private static final int MIN_WIDTH = 46;
+    private static final int MAX_WIDTH = 84;
+    private static final int MIN_DESC_WIDTH = 20;
+    /** Used when the terminal won't report its size — a conservative 80x30. */
+    private static final int FALLBACK_WIDTH = 80;
+    private static final int FALLBACK_HEIGHT = 30;
+    /** Rows scrolled per mouse wheel tick, matching {@code LogPanel}. */
+    private static final int WHEEL_STEP = 3;
+
     @NonNull
     private final UiContext ctx;
+    @NonNull
+    private final IntSupplier terminalHeight;
+    @NonNull
+    private final IntSupplier terminalWidth;
+
     @Getter
     private boolean open;
     private @Nullable String preOpenFocus;
 
+    /**
+     * First visible line, and the bounds the key handler clamps it against. Both are recomputed
+     * in {@link #build()} — which always runs before the next keypress is read — so the handler
+     * can clamp against the layout actually on screen rather than guessing at it.
+     */
+    private int scroll;
+    private int maxScroll;
+    private int pageRows = MIN_ROWS;
+
     public void open() {
         preOpenFocus = ctx.focusedId();
         ctx.clearFocus();
+        scroll = 0;
         open = true;
     }
 
@@ -42,97 +96,311 @@ public final class HelpOverlay {
         }
     }
 
+    // ==================== Rendering ====================
+
     public Element build() {
-        boolean vfox = ctx.state().vfox();
-        String tool = vfox ? "vfox" : "mise";
-        String configFile = vfox ? ".vfox.toml" : "mise.toml";
+        int width = dialogWidth();
+        List<Element> lines = document(width);
+        int rows = visibleRows();
 
-        List<Element> lines = new ArrayList<>(List.of(
-                text("tambo — a lazygit-style TUI for " + tool).bold(),
-                text(""),
-                helpLine(vfox ? "1, 2, 5" : "1-5", "Jump to a panel (5 = command log)"),
-                helpLine("6", "[advanced] Jump to the Advanced panel (only once V is on)"),
-                helpLine("Tab / Shift+Tab", "Cycle panels"),
-                helpLine("Up/Down, j/k", "Move selection / scroll"),
-                helpLine("/", vfox ? "Filter the focused list; Esc clears"
-                        : "Filter the focused list (Tools/Env/Tasks); Esc clears"),
-                helpLine("PgUp/PgDn", "Page up/down"),
-                helpLine("Left/Right, h/l", "Pan the focused panel / command log horizontally"),
-                helpLine("End", "Log: resume following the newest entry"),
-                helpLine("Mouse", "Click to focus a panel, wheel to scroll"),
-                helpLine("a", vfox ? "Add SDK — install another version of a plugin you already have"
-                        : "Add SDK — fuzzy-find registry modal"),
-                helpLine("e", "Edit project " + configFile + " in-app (Ctrl+S save, Esc discard)")));
-        if (vfox) {
-            lines.add(helpLine("p", "Add plugin — fuzzy-find the vfox catalog and register it"));
-        }
+        maxScroll = Math.max(0, lines.size() - rows);
+        scroll = Math.clamp(scroll, 0, maxScroll);
+        // Leave one line of overlap between screens so the eye has an anchor when paging.
+        pageRows = Math.max(1, rows - 1);
 
-        lines.add(helpLine("V", "Toggle the Advanced panel — an actionable menu for [advanced] keys below"));
-        if (!vfox) {
-            lines.add(helpLine("E", "[advanced] Edit global mise config.toml in-app"));
-        }
-        lines.add(helpLine("A", "Activate " + tool
-                + " in your shell profile (detects PowerShell, bash, zsh, fish, Nushell)"));
-        if (!vfox) {
-            lines.add(helpLine("T", "[advanced] Trust this project's mise config (mise trust)"));
-            lines.add(helpLine("D", "[advanced] Run mise doctor — full report in the log"));
-            lines.add(helpLine("U", "[advanced] " + (ctx.state().selfUpdateDisabled()
-                    ? "mise self-update — unavailable, update mise via your package manager"
-                    : "mise self-update")));
-            lines.add(helpLine("X", "[advanced] Prune unused/old tool versions (asks to confirm)"));
-        } else {
-            lines.add(helpLine("U", "[advanced] vfox upgrade — update vfox itself to the latest version"));
-            lines.add(helpLine("P", "[advanced] Add plugin with explicit name [--alias/--source]"));
-        }
-        lines.add(helpLine("B", "[advanced] Switch UI backend jline3/panama/aesh (now: " + ctx.uiBackend()
-                + ") — takes effect on restart"));
-        lines.add(helpLine("i", "Install selected tool"));
-        lines.add(helpLine("u", "Apply selected tool to project " + configFile));
-        lines.add(helpLine("x", "[advanced] Uninstall selected tool (asks to confirm)"));
-        lines.add(helpLine("R", "[advanced] Remove selected tool from project " + configFile + " (asks to confirm)"));
-        lines.add(helpLine("d", vfox
-                ? "[advanced] Remove selected tool's plugin AND all its versions (asks to confirm)"
-                : "[advanced] Remove selected tool's plugin, keeping versions (asks to confirm)"));
-        lines.add(helpLine("g", "Install/set as global default"));
-        if (!vfox) {
-            lines.add(helpLine("p", "Upgrade selected tool to the newest version"));
-            lines.add(helpLine("P", "Upgrade all outdated tools (asks to confirm)"));
-        }
-        if (!vfox) {
-            lines.add(helpLine("Enter", "Run selected task"));
-            lines.add(helpLine(":", "Run selected task with arguments"));
-            lines.add(helpLine(".", "Re-run the last task"));
-        }
-        lines.add(helpLine("c", "Cancel the selected tool/task (or the only one running)"));
-        lines.add(helpLine("C", "Cancel every running operation, from any panel"));
-        if (!vfox) {
-            lines.add(helpLine("y", "Env panel: copy the selected variable's value"));
-        }
-        lines.add(helpLine("r", "Refresh"));
-        lines.add(helpLine("q", "Quit"));
-        lines.add(helpLine("?", "Toggle this help"));
-        lines.add(text(""));
-        lines.add(text("In the Add SDK modal: type to fuzzy find, Enter to choose").dim());
-        lines.add(text(vfox ? "the plugin, then again for the version to install."
-                : "the SDK, then again for the version. Ctrl+G = local/global.").dim());
-        lines.add(text(""));
-        lines.add(text("Config: ~/.config/tambo/tambo.properties (theme.* colours,").dim());
-        lines.add(text("keys.* nav overrides). $TAMBO_CONFIG_DIR overrides the path.").dim());
-        lines.add(text(""));
-        lines.add(text("--offline at launch: shows only installed tools, blocks").dim());
-        lines.add(text("install/use" + (vfox ? "/self-update" : "/upgrade/self-update") + "/Add SDK (need the network).").dim());
-        lines.add(text(""));
-        lines.add(text("[advanced] keys are hidden until V is pressed (or launch with").dim());
-        lines.add(text("--advanced-features). The Advanced panel then splits off Details;").dim());
-        lines.add(text("↑/↓ + Enter runs one directly, or the letter still works anywhere.").dim());
-        lines.add(text(""));
-        lines.add(text("Press ? or Esc to close").dim());
+        int from = scroll;
+        int to = Math.min(lines.size(), scroll + rows);
+        List<Element> body = new ArrayList<>(lines.subList(from, to));
+        body.add(text(""));
+        // The full hint plus the position counter needs roughly 60 columns; below that the
+        // counter is what earns its place, so the hint drops to the two keys worth knowing.
+        body.add(row(
+                text(width >= 64 ? "↑/↓ scroll  PgUp/PgDn  Home/End  ? Esc q close" : "↑/↓ scroll  Esc close").dim(),
+                spacer(),
+                text((from + 1) + "-" + to + " of " + lines.size()).dim()
+        ));
 
-        return dialog("Help", lines.toArray(new Element[0]))
-                .rounded().borderColor(Color.CYAN).width(64);
+        return dialog("Help", body.toArray(new Element[0]))
+                .rounded().borderColor(Color.CYAN).width(width);
     }
 
-    private Element helpLine(String key, String description) {
-        return row(text(key).bold().yellow().constraint(length(18)), text(description));
+    /** Dialog width: as wide as the terminal allows, within readable bounds. */
+    private int dialogWidth() {
+        int reported = terminalWidth.getAsInt();
+        int usable = reported == Integer.MAX_VALUE ? FALLBACK_WIDTH : reported;
+        return Math.clamp(usable - 4, MIN_WIDTH, MAX_WIDTH);
+    }
+
+    /** How many lines of the reference fit on screen at once. */
+    private int visibleRows() {
+        int reported = terminalHeight.getAsInt();
+        int usable = reported == Integer.MAX_VALUE ? FALLBACK_HEIGHT : reported;
+        return Math.max(MIN_ROWS, usable - CHROME_ROWS);
+    }
+
+    // ==================== Key / mouse handling ====================
+
+    /** Called by {@code GlobalKeyBindings} for every key while the overlay is up. */
+    public void handleKey(@NonNull KeyEvent key) {
+        if (key.isCancel() || key.isConfirm() || key.isChar('?') || key.isChar('q')) {
+            close();
+            return;
+        }
+        if (key.code() == KeyCode.UP || key.isChar('k')) {
+            scrollBy(-1);
+        } else if (key.code() == KeyCode.DOWN || key.isChar('j')) {
+            scrollBy(1);
+        } else if (key.code() == KeyCode.PAGE_UP) {
+            scrollBy(-pageRows);
+        } else if (key.code() == KeyCode.PAGE_DOWN) {
+            scrollBy(pageRows);
+        } else if (key.code() == KeyCode.HOME) {
+            scroll = 0;
+        } else if (key.code() == KeyCode.END) {
+            scroll = maxScroll;
+        }
+    }
+
+    /** Called by {@code GlobalKeyBindings} for wheel events while the overlay is up. */
+    public void handleMouse(@NonNull MouseEvent event) {
+        if (event.kind() == MouseEventKind.SCROLL_UP) {
+            scrollBy(-WHEEL_STEP);
+        } else if (event.kind() == MouseEventKind.SCROLL_DOWN) {
+            scrollBy(WHEEL_STEP);
+        }
+    }
+
+    private void scrollBy(int delta) {
+        scroll = Math.clamp(scroll + delta, 0, maxScroll);
+    }
+
+    // ==================== Content ====================
+
+    /**
+     * The whole reference as flat lines, ready to be windowed. Rebuilt each frame so it tracks
+     * the live state it mentions — the active backend, whether self-update is available, and
+     * and which features the backend actually has.
+     */
+    private List<Element> document(int width) {
+        String tool = ctx.backend().name();
+        String configFile = ctx.backend().projectConfigFileName();
+        // Each section asks for the capability it documents rather than for a backend name, so
+        // the reference describes the session the user is actually in.
+        boolean tasks = ctx.supports(BackendFeature.TASKS);
+        boolean env = ctx.supports(BackendFeature.ENV);
+        boolean upgrade = ctx.supports(BackendFeature.UPGRADE);
+        boolean plugins = ctx.supports(BackendFeature.PLUGIN_REGISTRY);
+        boolean pins = ctx.supports(BackendFeature.PIN_ON_INSTALL);
+        boolean globalConfig = ctx.supports(BackendFeature.GLOBAL_CONFIG);
+        boolean trust = ctx.supports(BackendFeature.TRUST);
+        boolean doctor = ctx.supports(BackendFeature.DOCTOR);
+        boolean prune = ctx.supports(BackendFeature.PRUNE);
+        Doc doc = new Doc(width);
+
+        doc.title("tambo — a lazygit-style TUI for " + tool);
+
+        doc.section("LAYOUT");
+        doc.note("A stack of numbered panels down the left, all on screen at once, and one big "
+                + "pane on the right showing everything about whatever is selected in the "
+                + "focused panel. The command log sits under that pane. The focused panel has "
+                + "the bright border and takes the spare room; the others shrink but stay "
+                + "visible, so an install running in Tools is still in sight while you read "
+                + "Tasks. A panel this backend cannot serve keeps its slot, marked (n/a), and "
+                + "explains itself in the main pane when you press its number.");
+        doc.key("1-4", "Focus a panel: 1 Status, 2 Tools, 3 Env, 4 Tasks");
+        doc.key("5", "Focus the command log, under the main pane");
+        doc.key("6", "[advanced] Focus the Advanced panel");
+        doc.key("Tab / Shift+Tab", "Move to the next / previous panel");
+
+        doc.section("NAVIGATION");
+        doc.key("Up/Down, j/k", "Move the selection / scroll one line");
+        doc.key("PgUp / PgDn", "Page the focused list by ten rows");
+        doc.key("Home / End", "Jump to the first / last entry");
+        doc.key("Left/Right, h/l", "Pan the command log sideways, for lines wider than it. The "
+                + "panels lay their columns out to fit, so they never need it.");
+        doc.key("/", !(env && tasks)
+                ? "Filter the focused list; Esc clears the filter"
+                : "Filter the focused list (Tools, Env, Tasks); Esc clears the filter");
+        doc.key("Mouse", "Click to focus, wheel to scroll. The command log also "
+                + "takes horizontal wheel / trackpad swipes");
+
+        doc.section("TOOLS PANEL (2)");
+        doc.key("i", !pins
+                ? "Install the selected tool — with no version installed yet, opens the version picker instead"
+                : "Install the selected tool");
+        doc.key("u", "Apply the selected tool to the project " + configFile);
+        doc.key("g", "Install and set as the global default");
+        if (upgrade) {
+            doc.key("p", "Upgrade the selected tool to the newest version");
+        }
+        doc.key("x or Delete", "[advanced] Uninstall the selected version (asks to confirm)");
+        doc.key("R", "[advanced] Remove the selected tool from " + configFile + " (asks to confirm)");
+        doc.key("d", plugins
+                ? "[advanced] Remove the selected tool's plugin AND all its versions (asks to confirm)"
+                : "[advanced] Remove the selected tool's plugin, keeping installed versions (asks to confirm)");
+        doc.key("c", "Cancel whatever the selected tool is doing");
+
+        if (env) {
+            doc.section("ENV PANEL (3)");
+            doc.key("y", "Copy the selected variable's value to the clipboard");
+
+            doc.section("TASKS PANEL (4)");
+            doc.key("Enter", "Run the selected task");
+            doc.key(":", "Run the selected task with arguments");
+            doc.key(".", "Re-run the last task — works even with nothing selected");
+            doc.key("c", "Cancel the selected task");
+        }
+
+        doc.section("COMMAND LOG (5)");
+        doc.note("Every " + tool + " command this app runs, echoed the way lazygit echoes git.");
+        doc.key("Up/Down, j/k", "Scroll; PgUp/PgDn pages, Home jumps to the oldest entry");
+        doc.key("End", "Resume following the newest entry");
+        doc.key("Left/Right, h/l", "Pan long lines — streamed build output usually needs it");
+
+        doc.section("ADVANCED PANEL (6)");
+        doc.note("Only in the stack once V is on. The highlighted entry is explained in full in the main pane before you run it.");
+        doc.key("Up/Down + Enter", "Run the highlighted action");
+        doc.key("V", "Hide the panel again");
+
+        doc.section("ANYWHERE");
+        doc.key("a", plugins
+                ? "Add SDK — install another version of a plugin you already have"
+                : "Add SDK — fuzzy-find the mise registry");
+        if (plugins) {
+            doc.key("p", "Add plugin — fuzzy-find the " + tool + " catalog and register it");
+        }
+        if (upgrade) {
+            doc.key("P", "Upgrade every outdated tool (asks to confirm)");
+        }
+        doc.key("e", "Edit the project " + configFile + " in-app");
+        doc.key("A", "Activate " + tool + " in your shell profile — detects PowerShell, bash, "
+                + "zsh, fish and Nushell");
+        doc.key("V", "Toggle advanced features, and with them the Advanced panel");
+        doc.key("C", "Cancel every running operation, from any panel");
+        doc.key("r", "Refresh");
+        doc.key("?", "Toggle this help");
+        doc.key("q", "Quit");
+
+        doc.section("ADVANCED ACTIONS — press V first");
+        if (plugins) {
+            doc.key("P", "Add a plugin by name, with explicit --alias / --source");
+        }
+        if (trust) {
+            doc.key("T", "Trust this project's " + configFile + " (" + tool + " trust)");
+        }
+        if (globalConfig) {
+            doc.key("E", "Edit the global " + tool + " config.toml in-app");
+        }
+        if (doctor) {
+            doc.key("D", "Run " + tool + " doctor — full report in the command log");
+        }
+        doc.key("U", ctx.state().selfUpdateDisabled()
+                ? tool + " self-update — unavailable in this install, update " + tool
+                        + " via your package manager"
+                : tool + " self-update — update the " + tool + " binary itself");
+        if (prune) {
+            doc.key("X", "Prune unused/old tool versions (asks to confirm)");
+        }
+        doc.key("B", "Switch the UI backend between jline3, panama and aesh (now: "
+                + ctx.uiBackend() + ") — takes effect on restart");
+
+        doc.section("MODALS");
+        doc.note("Add SDK (a): type to fuzzy find, Up/Down and PgUp/PgDn move, Enter chooses. "
+                + (pins
+                ? "Pick the SDK, then the version. Ctrl+G toggles between this directory and global."
+                : "Pick the plugin, then the version — Enter only installs it, pin it afterwards with u or g.")
+                + " Esc steps back a stage, then closes.");
+        if (plugins) {
+            doc.note("Add plugin (p): type to fuzzy find the catalog, Enter registers the "
+                    + "highlighted plugin. [advanced] Typing a full \"<name> --alias <x> --source <url>\" "
+                    + "is submitted verbatim instead.");
+        }
+        doc.note("Config editor (e, E): Ctrl+S saves and refreshes so " + tool + " picks the "
+                + "change up; Esc closes, asking once first if there are unsaved changes.");
+        doc.note("Confirmations: y or Enter to go ahead, n or Esc to back out.");
+        doc.note("Backend picker (B): Up/Down then Enter applies and persists the choice; Esc cancels.");
+        if (tasks) {
+            doc.note("Task arguments (:): Enter runs the task with what you typed, Esc cancels.");
+        }
+
+        doc.section("LAUNCH FLAGS");
+        doc.flag("--backend", "Force mise or vfox instead of detecting it from "
+                + configFile + " in the current directory");
+        doc.flag("--offline", "Installed tools only — blocks install, use, "
+                + (upgrade ? "upgrade, self-update" : "self-update") + " and Add SDK, all of which need the network");
+        doc.flag("--advanced-features", "Start with the [advanced] keys already unlocked");
+        doc.flag("--mouse", "Mouse capture — already on by default in tambo");
+        doc.flag("--[no-]alt-screen", "Render on the alternate screen (default) or inline");
+        doc.flag("--show-cursor", "Leave the terminal cursor visible");
+        doc.flag("--tick-rate", "Animation tick in milliseconds; 0 disables animation");
+        doc.flag("--poll-timeout", "Event poll timeout in milliseconds");
+
+        doc.section("CONFIG");
+        doc.note("~/.config/tambo/tambo.properties holds theme.* colours and keys.* navigation "
+                + "overrides. $TAMBO_CONFIG_DIR overrides that path.");
+        if (globalConfig) {
+            doc.note("$MISE_CONFIG_DIR, when set, is where E looks for the global config.toml.");
+        }
+
+        return doc.lines();
+    }
+
+    /**
+     * Accumulates the reference as flat lines. Everything is wrapped as it is added, so the
+     * caller never has to think about the dialog's width and the windowing above can treat the
+     * result as a plain list of rows.
+     */
+    private static final class Doc {
+
+        private final List<Element> lines = new ArrayList<>();
+        private final int descWidth;
+        private final int flagDescWidth;
+        private final int noteWidth;
+
+        Doc(int width) {
+            this.descWidth = Math.max(MIN_DESC_WIDTH, width - KEY_WIDTH - DIALOG_CHROME_COLUMNS);
+            this.flagDescWidth = Math.max(MIN_DESC_WIDTH, width - FLAG_WIDTH - DIALOG_CHROME_COLUMNS);
+            this.noteWidth = Math.max(MIN_DESC_WIDTH, width - DIALOG_CHROME_COLUMNS);
+        }
+
+        void title(String text) {
+            lines.add(text(text).bold());
+        }
+
+        void section(String heading) {
+            lines.add(text(""));
+            lines.add(text(heading).bold().fg(Color.CYAN));
+        }
+
+        /** A key and what it does, the description wrapped under itself with the key column blank. */
+        void key(String key, String description) {
+            entry(key, description, KEY_WIDTH, descWidth);
+        }
+
+        /** A launch flag and what it does, in the wider {@link #FLAG_WIDTH} column. */
+        void flag(String flag, String description) {
+            entry(flag, description, FLAG_WIDTH, flagDescWidth);
+        }
+
+        private void entry(String label, String description, int labelWidth, int wrapWidth) {
+            List<String> wrapped = Ui.wordWrap(description, wrapWidth);
+            for (int i = 0; i < wrapped.size(); i++) {
+                lines.add(row(
+                        text(i == 0 ? label : "").bold().yellow().constraint(length(labelWidth)),
+                        text(wrapped.get(i))
+                ));
+            }
+        }
+
+        /** Prose that belongs to a section rather than to one key. */
+        void note(String text) {
+            for (String line : Ui.wordWrap(text, noteWidth)) {
+                lines.add(text(line).dim());
+            }
+        }
+
+        List<Element> lines() {
+            return lines;
+        }
     }
 }

@@ -1,6 +1,6 @@
 package com.sampong.tambo.tui.state;
 
-/** Element ids used for focus management and panel jumping. */
+/** Element ids used for focus management and panel selection. */
 public final class PanelIds {
 
     public static final String STATUS = "panel-status";

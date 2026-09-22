@@ -6,20 +6,26 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.toolkit.event.EventRouter;
 import dev.tamboui.tui.bindings.BindingSets;
 import dev.tamboui.tui.bindings.Bindings;
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
 
+import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo.tui.TuiComponents;
 import com.sampong.tambo.tui.components.AdvancedPanel;
+import com.sampong.tambo.tui.components.SidePanels;
 import com.sampong.tambo.tui.features.TamboConfig;
-import com.sampong.tambo.tui.lifecycle.AppLifecycle;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -62,17 +68,16 @@ public final class GlobalKeyBindings {
         }
     }
 
-    /**
-     * The project-scope config filename for whichever backend is active — used by the
-     * {@code e} key.
-     */
-    public static String projectConfigFileName(boolean vfox) {
-        return vfox ? AppLifecycle.VFOX_CONFIG_FILE : AppLifecycle.MISE_CONFIG_FILE;
-    }
-
     /** Registers the single global key handler every keypress not claimed by a focused input goes through. */
     public void register(@NonNull EventRouter router) {
         router.addGlobalHandler(event -> {
+            if (ui.helpOverlay().isOpen() && event instanceof MouseEvent mouse) {
+                // The overlay covers the panels, so the wheel scrolls the reference itself
+                // rather than whatever is underneath it, and a stray click cannot refocus a
+                // panel the user cannot even see.
+                ui.helpOverlay().handleMouse(mouse);
+                return EventResult.HANDLED;
+            }
             if (!(event instanceof KeyEvent key)) {
                 return EventResult.UNHANDLED;
             }
@@ -83,9 +88,9 @@ public final class GlobalKeyBindings {
                 return EventResult.HANDLED;
             }
             if (ui.helpOverlay().isOpen()) {
-                if (key.isCancel() || key.isConfirm() || key.isChar('?')) {
-                    ui.helpOverlay().close();
-                }
+                // No focusable element of its own — the overlay reads its own scroll
+                // and close keys here, the way ConfirmModal reads its y/n.
+                ui.helpOverlay().handleKey(key);
                 return EventResult.HANDLED;
             }
             if (ui.confirmModal().isOpen()) {
@@ -112,11 +117,13 @@ public final class GlobalKeyBindings {
                 boolean enabling = !ctx.state().advancedFeatures();
                 ctx.state().advancedFeatures(enabling);
                 if (enabling) {
-                    // Focus the panel this key just revealed — otherwise ↑/↓ stay routed
-                    // to whatever had focus before and silently do nothing.
-                    ctx.focus(PanelIds.ADVANCED);
+                    // Focus the panel this key just added to the stack — it appears at the
+                    // bottom, and leaving focus where it was would hide what the key did.
+                    ui.sidePanels().focus(SidePanels.Side.ADVANCED);
                 } else if (PanelIds.ADVANCED.equals(ctx.focusedId())) {
-                    ctx.focus(PanelIds.TOOLS);
+                    // The panel just left the stack; focus has to go somewhere that still
+                    // renders, or the next keypress would reach nothing.
+                    ui.sidePanels().focus(SidePanels.Side.TOOLS);
                 }
                 ctx.state().addLog(LogLevel.INFO, enabling
                         ? "Advanced features enabled — see the Advanced panel"
@@ -132,34 +139,34 @@ public final class GlobalKeyBindings {
                 return EventResult.HANDLED;
             }
             if (key.isChar('A')) {
-                ctx.actions().activateMise();
+                ctx.actions().activateShell();
                 return EventResult.HANDLED;
             }
-            if (key.isChar('T') && !ctx.state().vfox()) {
+            if (key.isChar('T') && ctx.supports(BackendFeature.TRUST)) {
                 if (requireAdvanced("Trust")) {
                     ctx.actions().trustProject();
                 }
                 return EventResult.HANDLED;
             }
             if (key.isChar('e')) {
-                String file = projectConfigFileName(ctx.state().vfox());
+                String file = ctx.backend().projectConfigFileName();
                 ui.configEditor().open(Path.of(file), "./" + file);
                 return EventResult.HANDLED;
             }
-            if (key.isChar('E') && !ctx.state().vfox()) {
+            if (key.isChar('E') && ctx.supports(BackendFeature.GLOBAL_CONFIG)) {
                 if (requireAdvanced("Editing the global config")) {
-                    ui.configEditor().open(globalConfigPath(), "global config.toml");
+                    ui.configEditor().open(requireGlobalConfigPath(), "global config.toml");
                 }
                 return EventResult.HANDLED;
             }
-            if (key.isChar('D') && !ctx.state().vfox()) {
-                if (requireAdvanced("mise doctor")) {
+            if (key.isChar('D') && ctx.supports(BackendFeature.DOCTOR)) {
+                if (requireAdvanced(ctx.backend().name() + " doctor")) {
                     ctx.actions().runDoctor();
                 }
                 return EventResult.HANDLED;
             }
             if (key.isChar('U')) {
-                if (requireAdvanced(ctx.state().vfox() ? "vfox upgrade" : "mise self-update")) {
+                if (requireAdvanced(ctx.backend().name() + " self-update")) {
                     ctx.actions().selfUpdate();
                 }
                 return EventResult.HANDLED;
@@ -170,7 +177,7 @@ public final class GlobalKeyBindings {
                 }
                 return EventResult.HANDLED;
             }
-            if (key.isChar('p') && ctx.state().vfox()) {
+            if (key.isChar('p') && ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
                 // vfox-only: 'p' is free (mise's ToolsPanel binds it to per-tool upgrade
                 // instead) — used here for the everyday "add plugin" flow, fuzzy-finding
                 // the catalog. The [advanced] --alias/--source raw syntax stays behind 'P'.
@@ -182,7 +189,7 @@ public final class GlobalKeyBindings {
                 return EventResult.HANDLED;
             }
             if (key.isChar('P')) {
-                if (ctx.state().vfox()) {
+                if (ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
                     if (requireAdvanced("Add plugin with --alias/--source")) {
                         if (ctx.state().offline()) {
                             ctx.state().addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
@@ -206,36 +213,37 @@ public final class GlobalKeyBindings {
                 ctx.actions().cancelAll();
                 return EventResult.HANDLED;
             }
-            if (key.isChar('X') && !ctx.state().vfox()) {
+            if (key.isChar('X') && ctx.supports(BackendFeature.PRUNE)) {
                 if (requireAdvanced("Prune")) {
                     ctx.confirm("Prune unused/old tool versions?", ctx.actions()::prune);
                 }
                 return EventResult.HANDLED;
             }
-            if (key.isChar('1')) {
-                ctx.focus(PanelIds.STATUS);
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('2')) {
-                ctx.focus(PanelIds.TOOLS);
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('3') && !ctx.state().vfox()) {
-                ctx.focus(PanelIds.ENV);
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('4') && !ctx.state().vfox()) {
-                ctx.focus(PanelIds.TASKS);
-                return EventResult.HANDLED;
-            }
             if (key.isChar('5')) {
+                // The command log is not in the stack — it sits under the main pane — so it is
+                // the one number key that does not go through SidePanels.
                 ctx.focus(PanelIds.LOG);
                 return EventResult.HANDLED;
             }
-            if (key.isChar('6')) {
-                if (requireAdvanced("The Advanced panel")) {
-                    ctx.focus(PanelIds.ADVANCED);
+            SidePanels.Side jump = sideFor(key);
+            if (jump != null) {
+                if (jump == SidePanels.Side.ADVANCED && !requireAdvanced("The Advanced panel")) {
+                    return EventResult.HANDLED;
                 }
+                if (ui.sidePanels().available(jump)) {
+                    ui.sidePanels().focus(jump);
+                } else {
+                    // The panel is in the stack but this backend cannot serve it, so there is
+                    // nothing to focus. Say why instead of letting the key look broken.
+                    ctx.state().addLog(LogLevel.INFO, ui.sidePanels().unsupportedReason(jump));
+                }
+                return EventResult.HANDLED;
+            }
+            if (key.code() == KeyCode.TAB) {
+                // lazygit's panel walk: Tab moves to the next panel in the stack, shift+Tab
+                // back. Every panel is on screen already, so this moves focus rather than
+                // swapping what is rendered.
+                ui.sidePanels().cycle(key.hasShift() ? -1 : 1);
                 return EventResult.HANDLED;
             }
             if (key.isChar('r') && !key.hasCtrl()) {
@@ -244,6 +252,21 @@ public final class GlobalKeyBindings {
             }
             return EventResult.UNHANDLED;
         });
+    }
+
+    /**
+     * The stack panel a number key jumps to, or null when the key is not one. Read off
+     * {@link SidePanels.Side#key()} so the keys, the panel order and the numbers printed in the
+     * panel titles can only ever come from one place. {@code 5} is absent: the command log is
+     * not in the stack and is handled before this is asked.
+     */
+    private SidePanels.@Nullable Side sideFor(KeyEvent key) {
+        for (SidePanels.Side side : SidePanels.Side.values()) {
+            if (key.isChar(side.key())) {
+                return side;
+            }
+        }
+        return null;
     }
 
     /**
@@ -272,12 +295,15 @@ public final class GlobalKeyBindings {
         ctx.state().addLog(LogLevel.INFO, "UI backend set to " + backend + " — restart tambo for this to take effect");
     }
 
-    /** The user-level mise config file, honoring {@code MISE_CONFIG_DIR} when set. */
-    private static Path globalConfigPath() {
-        String configDir = System.getenv("MISE_CONFIG_DIR");
-        return configDir != null && !configDir.isBlank()
-                ? Path.of(configDir, "config.toml")
-                : Path.of(System.getProperty("user.home"), ".config", "mise", "config.toml");
+    /**
+     * The active backend's user-level config file. Only ever reached behind a
+     * {@link BackendFeature#GLOBAL_CONFIG} check, which is exactly the condition under which
+     * the backend promises a non-null path — so a null here is a contract violation worth
+     * failing on rather than an editor opened on nothing.
+     */
+    private Path requireGlobalConfigPath() {
+        return Objects.requireNonNull(ctx.backend().globalConfigPath(),
+                () -> ctx.backend().name() + " declares GLOBAL_CONFIG but reports no path");
     }
 
     /**
@@ -289,8 +315,9 @@ public final class GlobalKeyBindings {
      * which has no meaning here.
      */
     public List<AdvancedPanel.Action> buildAdvancedActions() {
+        String name = ctx.backend().name();
         List<AdvancedPanel.Action> menu = new ArrayList<>();
-        if (ctx.state().vfox()) {
+        if (ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
             menu.add(new AdvancedPanel.Action("P", "Add plugin (--alias/--source)",
                     "Registers a plugin from a specific alias or source URL instead of the catalog.",
                     () -> {
@@ -300,24 +327,31 @@ public final class GlobalKeyBindings {
                             ui.addPluginModal().open();
                         }
                     }));
-            menu.add(new AdvancedPanel.Action("U", "vfox upgrade",
-                    "Updates vfox itself to the latest release.", ctx.actions()::selfUpdate));
-        } else {
+        }
+        if (ctx.supports(BackendFeature.TRUST)) {
             menu.add(new AdvancedPanel.Action("T", "Trust project config",
-                    "Marks this project's mise.toml as trusted so its tasks/env can run.",
+                    "Marks this project's " + ctx.backend().projectConfigFileName()
+                            + " as trusted so its tasks/env can run.",
                     ctx.actions()::trustProject));
+        }
+        if (ctx.supports(BackendFeature.GLOBAL_CONFIG)) {
             menu.add(new AdvancedPanel.Action("E", "Edit global config",
-                    "Opens the user-level mise config.toml in the built-in editor.",
-                    () -> ui.configEditor().open(globalConfigPath(), "global config.toml")));
-            menu.add(new AdvancedPanel.Action("D", "mise doctor",
-                    "Re-runs mise's own health check and refreshes the Status panel.",
+                    "Opens the user-level " + name + " config.toml in the built-in editor.",
+                    () -> ui.configEditor().open(requireGlobalConfigPath(), "global config.toml")));
+        }
+        if (ctx.supports(BackendFeature.DOCTOR)) {
+            menu.add(new AdvancedPanel.Action("D", name + " doctor",
+                    "Re-runs " + name + "'s own health check and refreshes the Status panel.",
                     ctx.actions()::runDoctor));
-            if (!ctx.state().selfUpdateDisabled()) {
-                menu.add(new AdvancedPanel.Action("U", "mise self-update",
-                        "Updates the mise binary itself to the latest release.", ctx.actions()::selfUpdate));
-            }
+        }
+        if (ctx.supports(BackendFeature.SELF_UPDATE) && !ctx.state().selfUpdateDisabled()) {
+            menu.add(new AdvancedPanel.Action("U", name + " self-update",
+                    "Updates the " + name + " binary itself to the latest release.",
+                    ctx.actions()::selfUpdate));
+        }
+        if (ctx.supports(BackendFeature.PRUNE)) {
             menu.add(new AdvancedPanel.Action("X", "Prune old versions",
-                    "Removes tool versions mise no longer thinks are in use. Asks to confirm first.",
+                    "Removes tool versions " + name + " no longer thinks are in use. Asks to confirm first.",
                     () -> ctx.confirm("Prune unused/old tool versions?", ctx.actions()::prune)));
         }
         menu.add(new AdvancedPanel.Action("B", "Switch UI backend (now: " + config.backend() + ")",

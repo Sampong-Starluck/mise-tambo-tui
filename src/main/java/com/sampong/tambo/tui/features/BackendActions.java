@@ -13,17 +13,15 @@ import java.util.stream.Collectors;
 
 import org.springframework.core.task.AsyncTaskExecutor;
 
-import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo._common.base.CancelRegistry;
-import com.sampong.tambo.mise.MiseMaintenanceService;
-import com.sampong.tambo.mise.MiseQueryService;
-import com.sampong.tambo.mise.MiseToolService;
-import com.sampong.tambo.mise.ShellActivationService;
-import com.sampong.tambo.mise.model.MiseTask;
-import com.sampong.tambo.mise.model.OutdatedTool;
-import com.sampong.tambo.mise.model.ToolVersion;
+import com.sampong.tambo._common.model.BackendFeature;
+import com.sampong.tambo._common.model.CliResult;
+import com.sampong.tambo._common.model.OutdatedSdk;
+import com.sampong.tambo._common.model.ProjectTask;
+import com.sampong.tambo._common.model.SdkRelease;
+import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.service.SdkVersionBackend;
-import com.sampong.tambo.vfox.VfoxSdkBackend;
+import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
@@ -34,20 +32,26 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * All mise operations the UI can trigger. Every call returns immediately: the
- * blocking CLI work runs on the injected executor (virtual threads), and results
- * are published back into {@link UiState} on the render thread. Long-running
- * commands stream their output into the command log live, line by line.
+ * Every operation the UI can trigger, against whichever backend this session resolved to. Each
+ * call returns immediately: the blocking CLI work runs on the injected executor (virtual
+ * threads), and results are published back into {@link UiState} on the render thread.
+ * Long-running commands stream their output into the command log live, line by line.
+ * <p>
+ * This used to hold a mise service trio plus the vfox backend and pick between them per action,
+ * which is why half of it read "if vfox … else mise". It now holds exactly one
+ * {@link SdkVersionBackend} and asks it what it supports, so an operation the backend cannot do
+ * is refused in one place, with the backend's own explanation, instead of at every call site.
  */
 @RequiredArgsConstructor
-public final class MiseActions {
+public final class BackendActions {
 
     @NonNull
-    private final MiseQueryService query;
-    @NonNull
-    private final MiseToolService tools;
-    @NonNull
-    private final MiseMaintenanceService maintenance;
+    private final SdkVersionBackend backend;
+    /**
+     * Writing the activation line into the user's shell startup file: a filesystem operation on
+     * the user's profile rather than a CLI call, so it stays its own service rather than
+     * becoming part of the backend contract.
+     */
     @NonNull
     private final ShellActivationService activation;
     @NonNull
@@ -59,105 +63,95 @@ public final class MiseActions {
     /** Marshals a runnable onto the TUI render thread. */
     @NonNull
     private final Consumer<Runnable> uiThread;
-    /** Install/use/list backend for SDK versions: mise by default, or vfox with {@code --backend=vfox}. */
-    @NonNull
-    private final SdkVersionBackend backend;
-    /**
-     * Always the concrete vfox backend, regardless of which one is active — used only by
-     * {@link #addPlugin}, a vfox-exclusive action with no mise equivalent in this app.
-     */
-    @NonNull
-    private final VfoxSdkBackend vfoxBackend;
+
+    public SdkVersionBackend backend() {
+        return backend;
+    }
 
     // ==================== Loading / refresh ====================
 
     /**
-     * Starts the P0 tier before the first frame is composed. Nothing else is
-     * fetched here: {@link #ensureDoctor()}, {@link #ensureOutdated()} and
-     * {@link #ensureRegistry()} pull in the slower tiers when a panel that
-     * actually needs them first renders.
+     * Starts the P0 tier before the first frame is composed. Nothing else is fetched here:
+     * {@link #ensureBackendInfo()}, {@link #ensureOutdated()} and {@link #ensureCatalog()} pull
+     * in the slower tiers when a surface that actually needs them first renders.
      */
     public void loadInitial() {
         loadEssentials();
     }
 
     /**
-     * Re-reads P0 and marks the derived views stale so whichever panel is on
-     * screen reloads them in the background. The registry is deliberately left
-     * alone — it lists what mise <em>can</em> install, which no local install,
-     * uninstall or trust change affects.
+     * Re-reads P0 and marks the derived views stale so whichever surface is on screen reloads
+     * them in the background. The catalog is deliberately left alone — it lists what the backend
+     * <em>can</em> install, which no local install, uninstall or trust change affects.
      */
     public void refresh() {
         state.addLog(LogLevel.INFO, "Refreshing…");
-        state.toolsLazy().invalidate();
+        state.sdksLazy().invalidate();
         state.tasksLazy().invalidate();
         state.envLazy().invalidate();
         state.trustLazy().invalidate();
-        state.doctorLazy().invalidate();
+        state.backendInfoLazy().invalidate();
         state.outdatedLazy().invalidate();
         loadEssentials();
     }
 
     /**
-     * P0 — the four ~10 ms calls behind everything the user reads and acts on
-     * straight away. Each publishes into {@link UiState} on its own instead of
-     * through a joined snapshot, so no single call can hold up the rest.
+     * P0 — the handful of ~10 ms calls behind everything the user reads and acts on straight
+     * away. Each publishes into {@link UiState} on its own instead of through a joined snapshot,
+     * so no single call can hold up the rest, and each is skipped outright when the backend has
+     * no such concept rather than shelling out to find that out.
      */
     private void loadEssentials() {
-        loadLazy(state.toolsLazy(), "tools", backend::listTools,
+        loadLazy(state.sdksLazy(), "sdks", backend::listSdks,
                 loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tools"));
-        // Tasks/env/trust are mise-only (no vfox equivalent) and their panels are hidden when
-        // vfox is active — skip them so vfox mode never shells out to mise at all.
-        if (!backend.name().equals("vfox")) {
-            loadLazy(state.tasksLazy(), "tasks", query::listTasks,
+        if (backend.supports(BackendFeature.TASKS)) {
+            loadLazy(state.tasksLazy(), "tasks", backend::listTasks,
                     loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tasks"));
-            loadLazy(state.envLazy(), "env", query::listEnv, null);
-            loadLazy(state.trustLazy(), "trust", query::trustStatus, null);
+        }
+        if (backend.supports(BackendFeature.ENV)) {
+            loadLazy(state.envLazy(), "env", backend::listEnv, null);
+        }
+        if (backend.supports(BackendFeature.TRUST)) {
+            loadLazy(state.trustLazy(), "trust", backend::trustStatus, null);
         }
     }
 
     // ==================== Lazy tiers ====================
 
     /**
-     * P1 — {@code mise doctor} (~290 ms). Fills the header and Status panel:
-     * on screen from the first frame, but nothing the user acts on in that
-     * first moment, so it loads on first render rather than delaying the frame.
+     * P1 — the backend's own version and health ({@code mise doctor}, ~290 ms; {@code vfox -v},
+     * much less). Fills the header and Status surface: on screen from the first frame, but
+     * nothing the user acts on in that first moment, so it loads on first render rather than
+     * delaying the frame.
      */
-    public void ensureDoctor() {
-        loadLazy(state.doctorLazy(), "doctor", query::doctorSummary, null);
+    public void ensureBackendInfo() {
+        loadLazy(state.backendInfoLazy(), "backend info", backend::info, null);
     }
 
     /**
-     * vfox's counterpart to {@link #ensureDoctor()}: {@code vfox -v} fills the header's
-     * version badge, loaded on first render the same way.
-     */
-    public void ensureVfoxVersion() {
-        loadLazy(state.vfoxVersionLazy(), "vfox-version", vfoxBackend::version, null);
-    }
-
-    /**
-     * P2 — {@code mise outdated} (~1.2 s cold, network). Only decorates tool
-     * rows with "↑ version"; every row renders correctly without it, so it is
-     * pulled in behind the already-visible list.
+     * P2 — which SDKs are outdated (~1.2 s cold, network). Only decorates rows with
+     * "↑ version"; every row renders correctly without it, so it is pulled in behind the
+     * already-visible list. Skipped entirely by backends that cannot answer.
      */
     public void ensureOutdated() {
-        loadLazy(state.outdatedLazy(), "outdated", () -> toOutdatedMap(query.listOutdated()), null);
+        if (!backend.supports(BackendFeature.UPGRADE) || state.offline()) {
+            return;
+        }
+        loadLazy(state.outdatedLazy(), "outdated", () -> toOutdatedMap(backend.listOutdated()), null);
     }
 
     /**
-     * P3 — the registry browsed by the Add-SDK modal ({@code mise registry} or
-     * {@code vfox available}, depending on the active backend). Never fetched unless the
-     * user opens the modal.
+     * P3 — the catalog browsed by the Add-SDK modal. Never fetched unless the user opens it.
      */
-    public void ensureRegistry() {
-        loadLazy(state.registryLazy(), "registry", backend::listAvailable, null);
+    public void ensureCatalog() {
+        loadLazy(state.catalogLazy(), "catalog", backend::listCatalog, null);
     }
 
     /**
-     * Runs {@code work} on the executor and publishes it into {@code lazy}, but
-     * only if the holder actually wants a load — safe to call from a render
-     * method that runs every frame. On failure the claim is released so the
-     * next frame retries rather than leaving the panel stuck on its placeholder.
+     * Runs {@code work} on the executor and publishes it into {@code lazy}, but only if the
+     * holder actually wants a load — safe to call from a render method that runs every frame.
+     * On failure the claim is released so the next frame retries rather than leaving the panel
+     * stuck on its placeholder.
      */
     private <T> void loadLazy(Lazy<T> lazy, String label, Supplier<T> work, @Nullable Consumer<T> onLoaded) {
         int token = lazy.claim();
@@ -184,24 +178,24 @@ public final class MiseActions {
         });
     }
 
-    /** Flattens the outdated list into a tool → latest-version lookup, ignoring entries without a target. */
-    private static Map<String, String> toOutdatedMap(List<OutdatedTool> outdated) {
+    /** Flattens the outdated list into an SDK → latest-version lookup, ignoring entries without a target. */
+    private static Map<String, String> toOutdatedMap(List<OutdatedSdk> outdated) {
         Map<String, String> map = new HashMap<>();
-        for (OutdatedTool o : outdated) {
+        for (OutdatedSdk o : outdated) {
             if (o.latest() != null && !o.latest().isBlank()) {
-                map.put(o.tool(), o.latest());
+                map.put(o.name(), o.latest());
             }
         }
         return map;
     }
 
-    // ==================== Tool operations ====================
+    // ==================== SDK operations ====================
 
-    public void installTool(@NonNull ToolVersion t) {
+    public void installSdk(@NonNull SdkVersion sdk) {
         if (blockedOffline("installing")) {
             return;
         }
-        String key = t.label();
+        String key = sdk.label();
         if (state.markBusy(key)) {
             return;
         }
@@ -214,8 +208,8 @@ public final class MiseActions {
                 });
     }
 
-    public void uninstallTool(@NonNull ToolVersion t) {
-        String key = t.label();
+    public void uninstallSdk(@NonNull SdkVersion sdk) {
+        String key = sdk.label();
         if (state.markBusy(key)) {
             return;
         }
@@ -229,12 +223,12 @@ public final class MiseActions {
     }
 
     /**
-     * Runs {@code <backend> unuse tool@version} — drops the entry from whichever scope
-     * (project or global) declares it, pruning the installed version too where the
-     * backend does that automatically (mise; vfox's {@code unuse} does not).
+     * Drops the entry from whichever scope (project or global) declares it, pruning the
+     * installed version too where the backend does that automatically (mise; vfox's
+     * {@code unuse} does not).
      */
-    public void removeTool(@NonNull ToolVersion t) {
-        String key = t.label();
+    public void removeSdk(@NonNull SdkVersion sdk) {
+        String key = sdk.label();
         if (state.markBusy(key)) {
             return;
         }
@@ -248,18 +242,16 @@ public final class MiseActions {
     }
 
     /**
-     * Removes the plugin behind the selected tool: {@code vfox remove -y <tool>} (which also
-     * deletes every installed version) or {@code mise plugins uninstall <tool>} (which keeps
-     * them). Busy under {@code remove-plugin:<tool>} so every row of that tool shows a spinner.
+     * Removes the plugin behind the selected SDK. Busy under {@code remove-plugin:<name>} so
+     * every row of that SDK shows a spinner, not just the selected version.
      */
-    public void removePlugin(@NonNull ToolVersion t) {
-        String plugin = t.tool();
+    public void removePlugin(@NonNull SdkVersion sdk) {
+        String plugin = sdk.name();
         String key = "remove-plugin:" + plugin;
         if (state.markBusy(key)) {
             return;
         }
-        String command = backend.name().equals("vfox") ? "vfox remove -y " + plugin : "mise plugins uninstall " + plugin;
-        state.addLog(LogLevel.CMD, "$ " + command);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " remove plugin " + plugin);
         submitBackground("remove plugin " + plugin, key,
                 () -> backend.removePlugin(plugin),
                 result -> {
@@ -268,61 +260,65 @@ public final class MiseActions {
                 });
     }
 
-    /** Runs {@code <backend> use [-g] tool@version} — installs and pins it at project or global scope. */
-    public void useTool(@NonNull String toolAtVersion, boolean global) {
+    /** Installs and pins {@code sdk@version} at project or global scope. */
+    public void useSdk(@NonNull String sdkAtVersion, boolean global) {
         if (blockedOffline("installing")) {
             return;
         }
-        String shortName = toolAtVersion.contains("@")
-                ? toolAtVersion.substring(0, toolAtVersion.indexOf('@'))
-                : toolAtVersion;
+        if (global && !backend.supports(BackendFeature.GLOBAL_SCOPE)) {
+            state.addLog(LogLevel.INFO, backend.unsupportedReason(BackendFeature.GLOBAL_SCOPE));
+            return;
+        }
+        String shortName = sdkAtVersion.contains("@")
+                ? sdkAtVersion.substring(0, sdkAtVersion.indexOf('@'))
+                : sdkAtVersion;
         String key = "registry:" + shortName;
         if (state.markBusy(key)) {
             return;
         }
-        String args = backend.name() + " use " + (global ? "-g " : "") + toolAtVersion;
+        String args = backend.name() + " use " + (global ? "-g " : "") + sdkAtVersion;
         state.addLog(LogLevel.CMD, "$ " + args);
         submitBackground(args, key,
-                () -> backend.use(toolAtVersion, global, liveLogLine(key), key),
+                () -> backend.use(sdkAtVersion, global, liveLogLine(key), key),
                 result -> {
                     logResult(result,
-                            global ? "Set " + toolAtVersion + " as global default"
-                                    : "Applied " + toolAtVersion + " at project scope",
+                            global ? "Set " + sdkAtVersion + " as global default"
+                                    : "Applied " + sdkAtVersion + " at project scope",
                             "Failed: " + args);
                     refresh();
                 });
     }
 
-    /** Runs {@code mise upgrade <tool>} for a single tool, then refreshes. */
-    public void upgradeTool(@NonNull ToolVersion t) {
-        if (blockedOffline("upgrading")) {
+    /** Upgrades a single SDK to the newest version its config allows, then refreshes. */
+    public void upgradeSdk(@NonNull SdkVersion sdk) {
+        if (refuseUnsupported(BackendFeature.UPGRADE) || blockedOffline("upgrading")) {
             return;
         }
-        String key = "upgrade:" + t.tool();
+        String key = "upgrade:" + sdk.name();
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise upgrade " + t.tool());
-        submitBackground("upgrade " + t.tool(), key,
-                () -> tools.upgrade(t.tool(), liveLogLine(key), key),
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " upgrade " + sdk.name());
+        submitBackground("upgrade " + sdk.name(), key,
+                () -> backend.upgrade(sdk.name(), liveLogLine(key), key),
                 result -> {
-                    logResult(result, "Upgraded " + t.tool(), "Upgrade failed: " + t.tool());
+                    logResult(result, "Upgraded " + sdk.name(), "Upgrade failed: " + sdk.name());
                     refresh();
                 });
     }
 
-    /** Runs {@code mise upgrade} for every outdated tool, then refreshes. */
+    /** Upgrades every outdated SDK, then refreshes. */
     public void upgradeAll() {
-        if (blockedOffline("upgrading")) {
+        if (refuseUnsupported(BackendFeature.UPGRADE) || blockedOffline("upgrading")) {
             return;
         }
         String key = "upgrade:*";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise upgrade");
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " upgrade");
         submitBackground("upgrade all", key,
-                () -> tools.upgrade("", liveLogLine(key), key),
+                () -> backend.upgrade("", liveLogLine(key), key),
                 result -> {
                     logResult(result, "Upgraded all outdated tools", "Upgrade failed");
                     refresh();
@@ -331,9 +327,9 @@ public final class MiseActions {
 
     // ==================== Cancellation ====================
 
-    /** Kills any in-flight install / use / upgrade for the given tool. */
-    public void cancelTool(@NonNull ToolVersion t) {
-        cancelFirst("Cancelled " + t.tool(), t.label(), "registry:" + t.tool(), "upgrade:" + t.tool());
+    /** Kills any in-flight install / use / upgrade for the given SDK. */
+    public void cancelSdk(@NonNull SdkVersion sdk) {
+        cancelFirst("Cancelled " + sdk.name(), sdk.label(), "registry:" + sdk.name(), "upgrade:" + sdk.name());
     }
 
     /** Kills the given task if it is currently running. */
@@ -342,14 +338,14 @@ public final class MiseActions {
     }
 
     /**
-     * Cancels the first of {@code keys} that is running. Failing that, falls back to
-     * the single operation that <em>is</em> running, if there is exactly one: 'c' is
-     * bound per-panel and cancels whatever the cursor sits on, so moving the
-     * selection off a running task — or switching panels to watch its output — used
-     * to report "nothing running" while the build carried on in the background.
+     * Cancels the first of {@code keys} that is running. Failing that, falls back to the single
+     * operation that <em>is</em> running, if there is exactly one: 'c' is bound per-surface and
+     * cancels whatever the cursor sits on, so moving the selection off a running task — or
+     * switching surfaces to watch its output — used to report "nothing running" while the build
+     * carried on in the background.
      * <p>
-     * The fallback stays off when several operations are in flight, since there is
-     * no way to guess which one was meant; {@link #cancelAll()} handles that case.
+     * The fallback stays off when several operations are in flight, since there is no way to
+     * guess which one was meant; {@link #cancelAll()} handles that case.
      */
     private void cancelFirst(String message, String... keys) {
         for (String key : keys) {
@@ -366,7 +362,7 @@ public final class MiseActions {
         }
         if (live.size() > 1) {
             state.addLog(LogLevel.INFO, live.size() + " operations running ("
-                    + live.stream().map(MiseActions::sourceLabel).sorted().collect(Collectors.joining(", "))
+                    + live.stream().map(BackendActions::sourceLabel).sorted().collect(Collectors.joining(", "))
                     + ") — press C to cancel all");
             return;
         }
@@ -379,7 +375,7 @@ public final class MiseActions {
         }
     }
 
-    /** Kills every in-flight operation, whatever panel or selection is active. */
+    /** Kills every in-flight operation, whatever surface or selection is active. */
     public void cancelAll() {
         Set<String> cancelled = cancelRegistry.cancelAll();
         if (cancelled.isEmpty()) {
@@ -387,18 +383,21 @@ public final class MiseActions {
             return;
         }
         state.addLog(LogLevel.INFO, "Cancelled "
-                + cancelled.stream().map(MiseActions::sourceLabel).sorted().collect(Collectors.joining(", ")));
+                + cancelled.stream().map(BackendActions::sourceLabel).sorted().collect(Collectors.joining(", ")));
     }
 
     // ==================== Tasks ====================
 
     /** Runs a task with no extra arguments. */
-    public void runTask(@NonNull MiseTask t) {
-        runTask(t.name(), "");
+    public void runTask(@NonNull ProjectTask task) {
+        runTask(task.name(), "");
     }
 
-    /** Runs {@code mise run <task> [-- args]}, remembering it for {@link #reRunLastTask()}. */
+    /** Runs a task, remembering it for {@link #reRunLastTask()}. */
     public void runTask(@NonNull String taskName, @NonNull String args) {
+        if (refuseUnsupported(BackendFeature.TASKS)) {
+            return;
+        }
         String key = "task:" + taskName;
         if (state.markBusy(key)) {
             return;
@@ -406,14 +405,17 @@ public final class MiseActions {
         state.lastTaskName(taskName);
         state.lastTaskArgs(args);
         String display = args.isBlank() ? taskName : taskName + " -- " + args;
-        state.addLog(LogLevel.CMD, "$ mise run " + display);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " run " + display);
         submitBackground("run " + taskName, key,
-                () -> tools.runTask(taskName, args, liveLogLine(key), key),
+                () -> backend.runTask(taskName, args, liveLogLine(key), key),
                 result -> logResult(result, "Task \"" + taskName + "\" finished", "Task \"" + taskName + "\" failed"));
     }
 
     /** Re-runs the last task (with its previous args); logs a hint when nothing has run yet. */
     public void reRunLastTask() {
+        if (refuseUnsupported(BackendFeature.TASKS)) {
+            return;
+        }
         String last = state.lastTaskName();
         if (last == null) {
             state.addLog(LogLevel.INFO, "No task has been run yet");
@@ -424,13 +426,14 @@ public final class MiseActions {
 
     // ==================== Shell activation ====================
 
-    /** Installs the {@code mise activate} line into the user's shell startup file. */
-    public void activateMise() {
+    /** Installs the backend's activation line into the user's shell startup file. */
+    public void activateShell() {
         String key = "activate";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise activate — writing the activation line to your shell profile");
+        state.addLog(LogLevel.CMD, "$ " + backend.name()
+                + " activate — writing the activation line to your shell profile");
         submitBackground("activate", key,
                 activation::activateInShell,
                 outcome -> {
@@ -440,45 +443,60 @@ public final class MiseActions {
                 });
     }
 
-    /** Runs {@code mise trust} so mise is allowed to parse this project's config. */
+    /** Marks this project's config trusted so the backend is allowed to parse it. */
     public void trustProject() {
+        if (refuseUnsupported(BackendFeature.TRUST)) {
+            return;
+        }
         String key = "trust";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise trust");
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " trust");
         submitBackground("trust", key,
-                maintenance::trust,
+                backend::trust,
                 result -> {
-                    logResult(result, "Config trusted — mise will now load this project's mise.toml",
-                            "mise trust failed");
+                    logResult(result, "Config trusted — " + backend.name() + " will now load this project's "
+                            + backend.projectConfigFileName(), backend.name() + " trust failed");
                     refresh();
                 });
     }
 
     // ==================== Maintenance ====================
 
-    /** Streams the full {@code mise doctor} report into the command log. */
+    /** Streams the backend's full health report into the command log. */
     public void runDoctor() {
+        if (refuseUnsupported(BackendFeature.DOCTOR)) {
+            return;
+        }
         String key = "doctor";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise doctor");
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " doctor");
         submitBackground("doctor", key,
-                () -> maintenance.doctor(liveLogLine(key)),
-                result -> logResult(result, "mise doctor: no problems found", "mise doctor found problems"));
+                () -> backend.doctor(liveLogLine(key)),
+                result -> {
+                    logResult(result, backend.name() + " doctor: no problems found",
+                            backend.name() + " doctor found problems");
+                    // The report is also the health summary the header and Status read.
+                    state.backendInfoLazy().invalidate();
+                    ensureBackendInfo();
+                });
     }
 
-    /** Runs {@code mise prune}, streaming progress, to reclaim disk from old versions. */
+    /** Reclaims disk from old versions, streaming progress. */
     public void prune() {
+        if (refuseUnsupported(BackendFeature.PRUNE)) {
+            return;
+        }
         String key = "prune";
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise prune");
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " prune");
         submitBackground("prune", key,
-                () -> maintenance.prune(liveLogLine(key)),
+                () -> backend.prune(liveLogLine(key)),
                 result -> {
                     logResult(result, "Pruned unused tool versions", "Prune failed");
                     refresh();
@@ -486,28 +504,27 @@ public final class MiseActions {
     }
 
     /**
-     * The substring mise prints when its self-update was compiled out. Matched
-     * rather than parsed: mise offers no exit code or flag distinguishing this
-     * from an ordinary update failure.
+     * The substring mise prints when its self-update was compiled out. Matched rather than
+     * parsed: mise offers no exit code or flag distinguishing this from an ordinary update
+     * failure.
      */
     private static final String SELF_UPDATE_DISABLED_MARKER = "disabled at build time";
 
-    /** Explains why self-update can never work here, in place of mise's raw error. */
-    private static final String SELF_UPDATE_DISABLED_MESSAGE =
-            "mise's self-update is disabled in this build — it was installed by a package manager, "
-                    + "so update it from there";
+    /** Explains why self-update can never work here, in place of the backend's raw error. */
+    private String selfUpdateDisabledMessage() {
+        return backend.name() + "'s self-update is disabled in this build — it was installed by a "
+                + "package manager, so update it from there";
+    }
 
-    /** Runs {@code mise self-update} (or {@code vfox upgrade} when vfox is active), streaming progress into the command log. */
+    /** Updates the backend's own binary, streaming progress into the command log. */
     public void selfUpdate() {
-        if (backend.name().equals("vfox")) {
-            vfoxSelfUpdate();
+        if (refuseUnsupported(BackendFeature.SELF_UPDATE)) {
             return;
         }
-        // Once mise has told us the feature is compiled out, that answer holds
-        // for the life of this binary: explain instead of spawning a process
-        // that is guaranteed to fail.
+        // Once the backend has told us the feature is compiled out, that answer holds for the
+        // life of this binary: explain instead of spawning a process guaranteed to fail.
         if (state.selfUpdateDisabled()) {
-            state.addLog(LogLevel.INFO, SELF_UPDATE_DISABLED_MESSAGE);
+            state.addLog(LogLevel.INFO, selfUpdateDisabledMessage());
             return;
         }
         if (blockedOffline("self-update")) {
@@ -517,34 +534,16 @@ public final class MiseActions {
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ mise self-update");
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " self-update");
         submitBackground("self-update", key,
-                () -> maintenance.selfUpdate(liveLogLine(key)),
+                () -> backend.selfUpdate(liveLogLine(key)),
                 result -> {
                     if (!result.ok() && mentionsDisabledSelfUpdate(result)) {
                         state.selfUpdateDisabled(true);
-                        state.addLog(LogLevel.INFO, SELF_UPDATE_DISABLED_MESSAGE);
+                        state.addLog(LogLevel.INFO, selfUpdateDisabledMessage());
                         return; // nothing changed, so nothing to refresh
                     }
-                    logResult(result, "mise is up to date", "Self-update failed");
-                    refresh();
-                });
-    }
-
-    /** Runs {@code vfox upgrade}, streaming progress into the command log. */
-    private void vfoxSelfUpdate() {
-        if (blockedOffline("upgrading")) {
-            return;
-        }
-        String key = "self-update";
-        if (state.markBusy(key)) {
-            return;
-        }
-        state.addLog(LogLevel.CMD, "$ vfox upgrade");
-        submitBackground("vfox upgrade", key,
-                () -> vfoxBackend.selfUpdate(liveLogLine(key)),
-                result -> {
-                    logResult(result, "vfox is up to date", "vfox upgrade failed");
+                    logResult(result, backend.name() + " is up to date", "Self-update failed");
                     refresh();
                 });
     }
@@ -559,7 +558,7 @@ public final class MiseActions {
 
     // ==================== Config files ====================
 
-    /** Writes edited config content to disk, then refreshes so mise picks it up. */
+    /** Writes edited config content to disk, then refreshes so the backend picks it up. */
     public void saveConfig(@NonNull Path file, @NonNull String content) {
         String key = "save:" + file;
         if (state.markBusy(key)) {
@@ -590,12 +589,16 @@ public final class MiseActions {
     }
 
     /**
-     * After a config save, parses the active config in the background and logs a
-     * warning if mise reports a TOML parse error — catching a broken edit early.
+     * After a config save, parses the active config in the background and logs a warning if the
+     * backend reports a TOML parse error — catching a broken edit early. Silently skipped by a
+     * backend with no parse check, since there is nothing to warn about either way.
      */
     private void validateConfigAsync() {
+        if (!backend.supports(BackendFeature.CONFIG_VALIDATE)) {
+            return;
+        }
         submitBackground("validate config",
-                maintenance::validateConfig,
+                backend::validateConfig,
                 result -> {
                     String stderr = result.stderr();
                     if (stderr.toLowerCase().contains("parse error")) {
@@ -613,29 +616,30 @@ public final class MiseActions {
         return "";
     }
 
-    // ==================== Registry ====================
+    // ==================== Catalog ====================
 
-    /** Fetches installable versions of a tool; {@code onDone} runs on the render thread. */
-    public void fetchRemoteVersions(@NonNull String tool, @NonNull Consumer<List<String>> onDone) {
-        state.addLog(LogLevel.CMD, "$ " + backend.name() + " ls-remote " + tool);
-        submitBackground("ls-remote " + tool,
-                () -> backend.listRemoteVersions(tool),
-                versions -> {
-                    // mise's list is prefixed with a synthetic "latest" entry; vfox's isn't.
-                    int realCount = backend.name().equals("mise") ? Math.max(0, versions.size() - 1) : versions.size();
-                    state.addLog(LogLevel.OK, realCount + " versions of " + tool + " available");
-                    onDone.accept(versions);
+    /** Fetches installable versions of an SDK; {@code onDone} runs on the render thread. */
+    public void fetchReleases(@NonNull String sdk, @NonNull Consumer<List<SdkRelease>> onDone) {
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " ls-remote " + sdk);
+        submitBackground("ls-remote " + sdk,
+                () -> backend.listReleases(sdk),
+                releases -> {
+                    // The synthetic "latest" alias is an entry in the list but not a real
+                    // release, so it should not be counted as one.
+                    long realCount = releases.stream().filter(r -> !r.latest()).count();
+                    state.addLog(LogLevel.OK, realCount + " versions of " + sdk + " available");
+                    onDone.accept(releases);
                 });
     }
 
     /**
-     * Runs {@code vfox add <rawInput tokens>} — registers a plugin standalone, without
-     * installing any version. {@code rawInput} is split on whitespace and passed straight
-     * through, so it can be a bare name ("nodejs") or include {@code --alias}/{@code --source}
-     * exactly as vfox's own CLI accepts them. No-op when mise is the active backend.
+     * Registers a plugin standalone, without installing any version. {@code rawInput} is split
+     * on whitespace and passed straight through, so it can be a bare name ("nodejs") or include
+     * the backend's own flags ({@code --alias}, {@code --source}) exactly as its CLI accepts
+     * them.
      */
-    public void addPlugin(@NonNull String rawInput) {
-        if (!backend.name().equals("vfox")) {
+    public void registerPlugin(@NonNull String rawInput) {
+        if (refuseUnsupported(BackendFeature.PLUGIN_REGISTRY)) {
             return;
         }
         String trimmed = rawInput.strip();
@@ -643,15 +647,16 @@ public final class MiseActions {
             return;
         }
         List<String> args = List.of(trimmed.split("\\s+"));
-        String key = "add-plugin:" + args.get(0);
+        String key = "add-plugin:" + args.getFirst();
         if (state.markBusy(key)) {
             return;
         }
-        state.addLog(LogLevel.CMD, "$ vfox add " + trimmed);
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " add " + trimmed);
         submitBackground("add plugin " + trimmed, key,
-                () -> vfoxBackend.addPlugin(args),
+                () -> backend.registerPlugin(args),
                 result -> {
-                    logResult(result, "Added plugin " + args.get(0), "Add plugin failed: " + args.get(0));
+                    logResult(result, "Added plugin " + args.getFirst(),
+                            "Add plugin failed: " + args.getFirst());
                     refresh();
                 });
     }
@@ -659,12 +664,25 @@ public final class MiseActions {
     // ==================== Plumbing ====================
 
     /**
-     * A line consumer for streaming commands: marshals every non-blank output line
-     * onto the render thread and appends it to the command log as it arrives,
-     * prefixed with a short source tag so concurrently running operations stay
-     * distinguishable in the shared log. Also records the (untagged) line as the
-     * live status of the operation under {@code busyKey}, so its panel row can
-     * show progress.
+     * Logs the backend's own explanation and returns true when {@code feature} is not available
+     * here. The single place an unsupported operation is refused: every action that needs a
+     * feature starts with this, so the answer is always the backend's wording rather than a
+     * silent no-op.
+     */
+    private boolean refuseUnsupported(BackendFeature feature) {
+        if (backend.supports(feature)) {
+            return false;
+        }
+        state.addLog(LogLevel.INFO, backend.unsupportedReason(feature));
+        return true;
+    }
+
+    /**
+     * A line consumer for streaming commands: marshals every non-blank output line onto the
+     * render thread and appends it to the command log as it arrives, prefixed with a short
+     * source tag so concurrently running operations stay distinguishable in the shared log.
+     * Also records the (untagged) line as the live status of the operation under
+     * {@code busyKey}, so its row can show progress.
      */
     private Consumer<String> liveLogLine(String busyKey) {
         String tag = "[" + sourceLabel(busyKey) + "] ";
@@ -687,8 +705,8 @@ public final class MiseActions {
             return busyKey.substring("registry:".length());
         }
         if (busyKey.startsWith("upgrade:")) {
-            String tool = busyKey.substring("upgrade:".length());
-            return tool.equals("*") ? "upgrade" : "upgrade " + tool;
+            String sdk = busyKey.substring("upgrade:".length());
+            return sdk.equals("*") ? "upgrade" : "upgrade " + sdk;
         }
         if (busyKey.startsWith("save:")) {
             return "save";
@@ -710,11 +728,10 @@ public final class MiseActions {
     }
 
     /**
-     * Like {@link #submitBackground(String, Supplier, Consumer)} but also clears
-     * {@code busyKey} before invoking the callback — including on the exception
-     * path, which the plain overload leaves marked busy forever since nothing
-     * else would clear it. Every action that calls {@link UiState#markBusy} up
-     * front must release it through this overload.
+     * Like {@link #submitBackground(String, Supplier, Consumer)} but also clears {@code busyKey}
+     * before invoking the callback — including on the exception path, which the plain overload
+     * leaves marked busy forever since nothing else would clear it. Every action that calls
+     * {@link UiState#markBusy} up front must release it through this overload.
      */
     private <T> void submitBackground(String label, String busyKey, Supplier<T> work, Consumer<T> onDone) {
         executor.execute(() -> {
@@ -736,12 +753,12 @@ public final class MiseActions {
     }
 
     /**
-     * Logs a message and returns {@code true} when the app was launched with
-     * {@code --offline} and {@code what} needs the network — the caller should
-     * bail out without marking anything busy or touching the CLI.
+     * Logs a message and returns {@code true} when the app was launched with {@code --offline}
+     * and {@code what} needs the network — the caller should bail out without marking anything
+     * busy or touching the CLI.
      */
     private boolean blockedOffline(String what) {
-        if (query.offline()) {
+        if (state.offline()) {
             state.addLog(LogLevel.INFO, "Offline mode — " + what + " needs network access");
             return true;
         }

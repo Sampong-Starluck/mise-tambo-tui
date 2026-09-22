@@ -28,12 +28,13 @@ import com.sampong.tambo.tui.components.HelpOverlay;
 import com.sampong.tambo.tui.components.LogPanel;
 import com.sampong.tambo.tui.components.RegistryModal;
 import com.sampong.tambo.tui.components.SelectBackendModal;
+import com.sampong.tambo.tui.components.SidePanels;
 import com.sampong.tambo.tui.components.StatusPanel;
 import com.sampong.tambo.tui.components.SwitchBackendModal;
 import com.sampong.tambo.tui.components.TaskArgsModal;
 import com.sampong.tambo.tui.components.TasksPanel;
 import com.sampong.tambo.tui.components.ToolsPanel;
-import com.sampong.tambo.tui.features.MiseActions;
+import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.features.TamboConfig;
 import com.sampong.tambo.tui.features.Theme;
 import com.sampong.tambo.tui.keys.GlobalKeyBindings;
@@ -56,7 +57,7 @@ import lombok.NonNull;
  * <ul>
  *   <li>{@code state/} — {@link UiState}, the shared data every panel renders
  *       from, plus the {@link UiContext} interface panels see the app through</li>
- *   <li>{@code features/} — {@link MiseActions} and other background/feature logic</li>
+ *   <li>{@code features/} — {@link BackendActions} and other background/feature logic</li>
  *   <li>{@code components/} — one class per panel: {@link StatusPanel}, {@link ToolsPanel},
  *       {@link EnvPanel}, {@link TasksPanel}, {@link DetailPanel}, {@link LogPanel},
  *       {@link AdvancedPanel}, plus the modal/overlay components</li>
@@ -78,9 +79,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     private final GlobalKeyBindings keyBindings;
     private final TuiMixin tuiOptions;
 
-    public MiseTuiApp(@NonNull MiseQueryService query, @NonNull MiseToolService tools,
-                      @NonNull MiseMaintenanceService maintenance,
-                      @NonNull MiseShellActivationServiceImp miseActivation,
+    public MiseTuiApp(@NonNull MiseShellActivationServiceImp miseActivation,
                       @NonNull VfoxShellActivationServiceImp vfoxActivation,
                       @NonNull CancelRegistry cancelRegistry, @NonNull TamboConfig config,
                       @NonNull MiseSdkBackend miseSdkBackend, @NonNull VfoxSdkBackend vfoxSdkBackend,
@@ -92,30 +91,38 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.state.advancedFeatures(command.advancedFeatures());
         this.tuiOptions = command.tuiOptions();
 
-        this.lifecycle = new AppLifecycle(query, tools, maintenance, miseActivation, vfoxActivation,
+        this.lifecycle = new AppLifecycle(miseActivation, vfoxActivation,
                 cancelRegistry, miseSdkBackend, vfoxSdkBackend, executor, state,
                 r -> runner().runOnRenderThread(r), command);
 
+        StatusPanel statusPanel = new StatusPanel(this);
         ToolsPanel toolsPanel = new ToolsPanel(this);
         TasksPanel tasksPanel = new TasksPanel(this);
+        EnvPanel envPanel = new EnvPanel(this);
+        AdvancedPanel advancedPanel = new AdvancedPanel(this);
+        // Status is the one panel sized to its content rather than to a share of the sidebar,
+        // so the stack has to be able to ask it how tall it currently is.
+        SidePanels sidePanels = new SidePanels(this, statusPanel::rowCount);
         this.ui = new TuiComponents(
-                new StatusPanel(this),
+                statusPanel,
                 toolsPanel,
-                new EnvPanel(this),
+                envPanel,
                 tasksPanel,
-                new DetailPanel(this, toolsPanel, tasksPanel),
+                new DetailPanel(this, sidePanels, toolsPanel, tasksPanel, envPanel, advancedPanel),
                 new LogPanel(this),
-                new AdvancedPanel(this),
+                advancedPanel,
+                sidePanels,
                 new RegistryModal(this),
                 new ConfigEditorModal(this),
                 new ConfirmModal(this),
                 new TaskArgsModal(this),
                 new AddPluginModal(this),
-                new HelpOverlay(this),
+                new HelpOverlay(this, this::terminalHeight, this::terminalWidth),
                 new SelectBackendModal(),
                 new SwitchBackendModal(this));
         this.keyBindings = new GlobalKeyBindings(this, ui, config);
-        this.layout = new AppLayout(this, ui, this::terminalHeight, keyBindings::buildAdvancedActions);
+        this.layout = new AppLayout(this, ui, this::terminalHeight, this::terminalWidth,
+                keyBindings::buildAdvancedActions);
     }
 
     // ==================== UiContext ====================
@@ -126,7 +133,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     @Override
-    public MiseActions actions() {
+    public BackendActions actions() {
         return lifecycle.actions();
     }
 
@@ -205,6 +212,15 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     protected Element render() {
         return layout.render();
+    }
+
+    /** Counterpart to {@link #terminalHeight()}: only the help overlay sizes itself by width too. */
+    private int terminalWidth() {
+        try {
+            return runner().tuiRunner().terminal().size().width();
+        } catch (Exception e) {
+            return Integer.MAX_VALUE; // size unavailable — fall back to a fixed dialog width
+        }
     }
 
     private int terminalHeight() {

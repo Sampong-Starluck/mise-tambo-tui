@@ -15,6 +15,7 @@ import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextAreaState;
 
+import com.sampong.tambo.tui.features.TomlSyntax;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
@@ -98,6 +99,10 @@ public final class ConfigEditorModal {
         return dialog(dialogTitle,
                 textArea(buffer)
                         .showLineNumbers()
+                        // TamboUI 0.5.0's TextArea highlighting hook. Every file this editor
+                        // opens is TOML, and 0.5.0 bundles no TOML grammar, so the app supplies
+                        // its own — see TomlSyntax.
+                        .highlighter(TomlSyntax.highlighter(), TomlSyntax.LANGUAGE)
                         .id(PanelIds.CONFIG_EDITOR)
                         .focusable(true)
                         .onKeyEvent(this::handleKey)

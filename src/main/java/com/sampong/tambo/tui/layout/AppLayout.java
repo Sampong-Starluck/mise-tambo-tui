@@ -4,53 +4,71 @@ import static dev.tamboui.toolkit.Toolkit.column;
 import static dev.tamboui.toolkit.Toolkit.dock;
 import static dev.tamboui.toolkit.Toolkit.fill;
 import static dev.tamboui.toolkit.Toolkit.length;
+import static dev.tamboui.toolkit.Toolkit.panel;
 import static dev.tamboui.toolkit.Toolkit.row;
 import static dev.tamboui.toolkit.Toolkit.spacer;
 import static dev.tamboui.toolkit.Toolkit.stack;
 import static dev.tamboui.toolkit.Toolkit.text;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
-import dev.tamboui.layout.Constraint;
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
-import dev.tamboui.toolkit.elements.Column;
+import dev.tamboui.toolkit.element.StyledElement;
 
+import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo.tui.TuiComponents;
 import com.sampong.tambo.tui.components.AdvancedPanel;
-import com.sampong.tambo.tui.state.PanelIds;
+import com.sampong.tambo.tui.components.SidePanels;
+import com.sampong.tambo.tui.components.Ui;
 import com.sampong.tambo.tui.state.UiContext;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Everything about what's on screen: the top-level dock (header/sidebar/main/footer), the
- * lazygit-style accordion the sidebar collapses into on cramped terminals, and the modal/overlay
- * stacking order. Turns {@link UiContext#state()} into {@link Element}s; owns no key handling of
- * its own — {@code com.sampong.tambo.tui.keys.GlobalKeyBindings} is the counterpart that decides
- * what a keypress does.
+ * Everything about what's on screen: the header, the lazygit-style panel stack down the left, the
+ * main pane and command log beside it, the footer, and the modal/overlay stacking order. Turns
+ * {@link UiContext#state()} into {@link Element}s; owns no key handling of its own —
+ * {@code com.sampong.tambo.tui.keys.GlobalKeyBindings} is the counterpart that decides what a
+ * keypress does.
+ * <p>
+ * The shape is lazygit's, and it is deliberately back: a stack of small numbered panels on the
+ * left, one large pane on the right showing whatever the selection is, a command log under it,
+ * and a single contextual hint line at the bottom. An interim version showed one panel at a time
+ * in a tab bar, which did give the active list the full width — at the cost of the property this
+ * layout exists for, that an install running in Tools stays visible while you read Tasks.
+ * <p>
+ * Nothing here branches on which backend is active. The stack decides for itself which panels a
+ * backend can serve and how tall each one is (see {@link SidePanels}), so a backend with fewer
+ * panels gets bigger ones rather than a column of dead space.
  */
 @RequiredArgsConstructor
 public final class AppLayout {
 
-    private static final int SIDEBAR_WIDTH = 56;
-    /** Below this terminal height the sidebar collapses unfocused panels to their title bar. */
-    private static final int ACCORDION_HEIGHT = 28;
-    /** A collapsed panel: just the top border with the title, plus the bottom border. */
-    private static final int COLLAPSED_HEIGHT = 2;
-    private static final int STATUS_HEIGHT = 8;
+    /** The header and footer lines the body sits between. */
+    private static final int HEADER_FOOTER_ROWS = 2;
     /**
-     * vfox's Status panel has far fewer rows than mise's (no doctor-derived active/trust/shims/
-     * configs — see {@link com.sampong.tambo.tui.components.StatusPanel}'s vfox branch), so it
-     * gets its own, shorter height rather than inheriting {@link #STATUS_HEIGHT} and leaving a
-     * block of dead space below it. Covers the vfox/ui rows; +1 when offline adds the mode row.
+     * Below this terminal width the main pane is dropped and the stack takes the whole width.
+     * Splitting a narrow terminal in two leaves a sidebar too cramped to show a version number
+     * beside a name, and a pane too cramped to be worth the columns it cost.
      */
-    private static final int VFOX_STATUS_HEIGHT = 4;
-    /** Fixed width of the Advanced panel when split side-by-side with Details (V toggles it on). */
-    private static final int ADVANCED_WIDTH = 60;
+    private static final int TWO_PANE_MIN_WIDTH = 96;
+    /** Share of the width the sidebar asks for, before the min/max clamp. */
+    private static final int SIDEBAR_PERCENT = 36;
+    private static final int SIDEBAR_MIN_WIDTH = 42;
+    private static final int SIDEBAR_MAX_WIDTH = 72;
+    /** Assumed terminal size when the backend cannot report one — a conventional 80x24 and a bit. */
+    private static final int ASSUMED_WIDTH = 120;
+    private static final int ASSUMED_HEIGHT = 40;
+    /** Vertical split between the main pane and the command log beneath it. */
+    private static final int MAIN_WEIGHT = 3;
+    private static final int LOG_WEIGHT = 1;
+    /** Columns kept clear between the footer's two halves so they never read as one sentence. */
+    private static final int FOOTER_GAP = 3;
 
     @NonNull
     private final UiContext ctx;
@@ -59,23 +77,22 @@ public final class AppLayout {
     @NonNull
     private final IntSupplier terminalHeight;
     @NonNull
+    private final IntSupplier terminalWidth;
+    @NonNull
     private final Supplier<List<AdvancedPanel.Action>> advancedActions;
 
     public Element render() {
         if (ui.selectBackendModal().isOpen()) {
-            // Nothing else is decided yet (buildHeader() alone would already call
-            // actions.ensureDoctor(), firing a mise command before the user has even
-            // chosen mise vs vfox) — show only the picker over a blank backdrop.
+            // Nothing else is decided yet (buildHeader() alone would already ask the backend
+            // for its version, firing a command before the user has even chosen mise vs vfox)
+            // — show only the picker over a blank backdrop.
             return stack(text(""), ui.selectBackendModal().build());
         }
 
         Element body = dock()
                 .top(buildHeader(), length(1))
                 .bottom(buildFooter(), length(1))
-                .center(row(
-                        buildSidebar().constraint(length(SIDEBAR_WIDTH)),
-                        buildMainColumn().constraint(fill())
-                ));
+                .center(buildBody());
 
         if (ui.helpOverlay().isOpen()) {
             return stack(body, ui.helpOverlay().build());
@@ -101,106 +118,114 @@ public final class AppLayout {
         return body;
     }
 
-    private Column buildSidebar() {
-        // Env/Tasks are entirely mise-derived (env/tasks) with no vfox equivalent, so vfox
-        // mode shows Status (now vfox-flavoured, see StatusPanel) plus Tools rather than four
-        // panels of mostly nothing. The Advanced panel lives in the main column (see
-        // buildMainColumn()), not here — it needs more room than this sidebar can spare once
-        // terminals get cramped.
-        if (ctx.state().vfox()) {
-            int vfoxStatusHeight = VFOX_STATUS_HEIGHT + (ctx.state().offline() ? 1 : 0);
-            if (terminalHeight.getAsInt() >= ACCORDION_HEIGHT) {
-                return column(
-                        ui.statusPanel().build().constraint(length(vfoxStatusHeight)),
-                        ui.toolsPanel().build().constraint(fill())
-                );
-            }
-            String focus = ctx.focusedId();
-            String expandedId = PanelIds.STATUS.equals(focus) ? PanelIds.STATUS : PanelIds.TOOLS;
+    /**
+     * The stack beside the main pane and the command log — or, on a terminal too narrow to
+     * split, the stack above the log with the main pane dropped. The main pane is what goes
+     * first: everything it shows is <em>about</em> a row in the stack, so losing it costs
+     * detail, while losing the stack would cost the thing being detailed.
+     */
+    private Element buildBody() {
+        int width = size(terminalWidth, ASSUMED_WIDTH);
+        int bodyHeight = Math.max(6, size(terminalHeight, ASSUMED_HEIGHT) - HEADER_FOOTER_ROWS);
+        List<AdvancedPanel.Action> actions = advancedActions.get();
+
+        if (width < TWO_PANE_MIN_WIDTH) {
+            int stackHeight = bodyHeight * MAIN_WEIGHT / (MAIN_WEIGHT + LOG_WEIGHT);
             return column(
-                    ui.statusPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.STATUS, length(vfoxStatusHeight))),
-                    ui.toolsPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.TOOLS, fill()))
-            );
+                    buildSidebar(stackHeight, actions).constraint(fill(MAIN_WEIGHT)),
+                    ui.logPanel().build().constraint(fill(LOG_WEIGHT)));
         }
-        if (terminalHeight.getAsInt() >= ACCORDION_HEIGHT) {
-            return column(
-                    ui.statusPanel().build().constraint(length(STATUS_HEIGHT)),
-                    ui.toolsPanel().build().constraint(fill(3)),
-                    ui.envPanel().build().constraint(fill(1)),
-                    ui.tasksPanel().build().constraint(fill(2))
-            );
-        }
-        // lazygit-style accordion for cramped terminals: the focused panel gets all
-        // the space, every other panel collapses to just its title bar.
-        String focus = ctx.focusedId();
-        String expandedId = switch (focus) {
-            case PanelIds.STATUS, PanelIds.ENV, PanelIds.TASKS -> focus;
-            case null, default -> PanelIds.TOOLS;
-        };
-        return column(
-                ui.statusPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.STATUS, length(STATUS_HEIGHT))),
-                ui.toolsPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.TOOLS, fill())),
-                ui.envPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.ENV, fill())),
-                ui.tasksPanel().build().constraint(sidebarConstraint(expandedId, PanelIds.TASKS, fill()))
-        );
+
+        int sidebarWidth = Math.clamp(width * SIDEBAR_PERCENT / 100L,
+                SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        return row(
+                buildSidebar(bodyHeight, actions).constraint(length(sidebarWidth)),
+                column(
+                        ui.detailPanel().build(width - sidebarWidth, actions).constraint(fill(MAIN_WEIGHT)),
+                        ui.logPanel().build().constraint(fill(LOG_WEIGHT))
+                ).constraint(fill()));
     }
 
-    private static Constraint sidebarConstraint(String expandedId, String panelId, Constraint whenExpanded) {
-        return panelId.equals(expandedId) ? whenExpanded : length(COLLAPSED_HEIGHT);
+    /** The numbered panel stack, each panel sized by {@link SidePanels#constraint}. */
+    private StyledElement<?> buildSidebar(int sidebarHeight, List<AdvancedPanel.Action> actions) {
+        SidePanels sides = ui.sidePanels();
+        List<Element> stacked = new ArrayList<>();
+        for (SidePanels.Side side : sides.visible()) {
+            stacked.add(buildSide(side, actions).constraint(sides.constraint(side, sidebarHeight)));
+        }
+        return column(stacked.toArray(new Element[0]));
     }
 
     /**
-     * {@code V} splits Details side-by-side with Advanced (the interactive menu for the
-     * maintenance/config actions {@code GlobalKeyBindings#requireAdvanced} gates); pressing it
-     * again drops back to Details alone. Always available here regardless of terminal size or
-     * vfox/mise mode, unlike the sidebar panels above, which run out of room on cramped terminals.
+     * One panel of the stack. A panel the backend cannot serve still renders — collapsed to its
+     * title bar, dimmed, and not focusable — so the stack keeps the same slots and the same
+     * number keys whichever backend is driving. The explanation goes in the main pane, which is
+     * the only place with room for a sentence.
      */
-    private Column buildMainColumn() {
-        if (ctx.state().advancedFeatures()) {
-            return column(
-                    row(
-                            ui.detailPanel().build().constraint(fill()),
-                            ui.advancedPanel().build(advancedActions.get(), ADVANCED_WIDTH).constraint(length(ADVANCED_WIDTH))
-                    ).constraint(fill(3)),
-                    ui.logPanel().build().constraint(fill(1))
-            );
+    private StyledElement<?> buildSide(SidePanels.Side side, List<AdvancedPanel.Action> actions) {
+        SidePanels sides = ui.sidePanels();
+        if (!sides.available(side)) {
+            return panel(SidePanels.unavailableTitle(side))
+                    .rounded()
+                    .borderColor(ctx.theme().idle());
         }
-        return column(
-                ui.detailPanel().build().constraint(fill(3)),
-                ui.logPanel().build().constraint(fill(1))
-        );
+        return switch (side) {
+            case STATUS -> ui.statusPanel().build();
+            case TOOLS -> ui.toolsPanel().build();
+            case ENV -> ui.envPanel().build();
+            case TASKS -> ui.tasksPanel().build();
+            case ADVANCED -> ui.advancedPanel().build(actions);
+        };
     }
 
+    /** Falls back to an assumed size when the terminal cannot report one (it returns MAX_VALUE). */
+    private static int size(IntSupplier source, int assumed) {
+        int reported = source.getAsInt();
+        return reported <= 0 || reported == Integer.MAX_VALUE ? assumed : reported;
+    }
+
+    /**
+     * Name, version, and — for a backend that reports health — whether it is activated, plus a
+     * live count of what is running. The activity counter earns its place even with the stack
+     * visible: a panel collapsed to its title bar on a short terminal hides its own spinners.
+     */
     private Element buildHeader() {
-        if (ctx.state().vfox()) {
-            // No `vfox doctor` equivalent exists, but `vfox -v` gives at least a version badge.
-            ctx.actions().ensureVfoxVersion();
+        String name = ctx.backend().name();
+        ctx.actions().ensureBackendInfo();
+        boolean known = ctx.state().backendInfoLazy().everLoaded();
+
+        Element activity = ctx.state().anyBusy()
+                ? text(Ui.spinner() + " " + ctx.state().busyCount() + " running  ").fg(Color.YELLOW)
+                : text("");
+
+        if (!ctx.supports(BackendFeature.DOCTOR)) {
+            // No health report behind this backend — its version is all there is to badge.
             return row(
                     text(" tambo ").bold().cyan(),
-                    text("— a TUI for vfox").dim(),
+                    text("— a TUI for " + name).dim(),
                     spacer(),
-                    text("vfox " + ctx.state().vfoxVersion()).fg(Color.GREEN)
+                    activity,
+                    known ? text(name + " " + ctx.state().backendInfo().version()).fg(Color.GREEN)
+                            : text("checking " + name + "…").dim()
             );
         }
-        // Both fields here come from `mise doctor`, which loads lazily; until it
-        // answers the header stays neutral rather than announcing "not activated".
-        ctx.actions().ensureDoctor();
-        if (!ctx.state().doctorLazy().everLoaded()) {
+        if (!known) {
             return row(
                     text(" tambo ").bold().cyan(),
-                    text("— a TUI for mise").dim(),
+                    text("— a TUI for " + name).dim(),
                     spacer(),
-                    text("checking mise…").dim()
+                    activity,
+                    text("checking " + name + "…").dim()
             );
         }
-        Color statusColor = ctx.state().doctor().activated() ? Color.GREEN : Color.YELLOW;
-        String statusText = ctx.state().doctor().activated() ? "activated" : "not activated";
+        boolean activated = ctx.state().backendInfo().activated();
         return row(
                 text(" tambo ").bold().cyan(),
-                text("— a TUI for mise").dim(),
+                text("— a TUI for " + name).dim(),
                 spacer(),
-                text("mise " + ctx.state().doctor().version() + "  ").dim(),
-                text(statusText).fg(statusColor)
+                activity,
+                text(name + " " + ctx.state().backendInfo().version() + "  ").dim(),
+                text(activated ? "activated" : "not activated").fg(activated ? Color.GREEN : Color.YELLOW)
         );
     }
 
@@ -219,36 +244,54 @@ public final class AppLayout {
         } else if (ui.configEditor().isOpen()) {
             hints = ui.configEditor().footerHint();
         } else {
-            String focus = ctx.focusedId();
-            hints = switch (focus) {
-                case PanelIds.TOOLS -> ctx.state().vfox()
-                        ? "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   R remove   d rm plugin   g global   c cancel   C all"
-                        : "↑/↓ select   / filter   ←/→ pan   i install   u use   x uninstall   d rm plugin   g global   p upgrade   c cancel   C all";
-                case PanelIds.TASKS -> "↑/↓ select   / filter   ←/→ pan   enter run   : args   . re-run   c cancel   C all";
-                case PanelIds.ENV -> "↑/↓ scroll   / filter   ←/→ pan   y copy value";
-                case PanelIds.LOG -> "↑/↓ j/k scroll   ←/→ h/l pan   PgUp/PgDn page   End follow newest";
-                case PanelIds.ADVANCED -> "↑/↓ select   enter run   V hide";
-                case null, default -> ctx.state().vfox()
-                        ? "1,2,5 jump   tab cycle"
-                        : (ctx.state().advancedFeatures() ? "1-6 jump   tab cycle" : "1-5 jump   tab cycle");
-            };
+            hints = panelHints();
+        }
+        // Both halves are as long as they are useful, which on a narrow terminal is longer than
+        // the line. Rather than let them collide in the middle — which is what a spacer between
+        // two oversized strings does — the global half drops first, then the contextual half is
+        // cut. Everything dropped is still one '?' away, which is the whole point of having a
+        // short hint line and a full reference.
+        String global = globalKeyHints();
+        int width = size(terminalWidth, ASSUMED_WIDTH);
+        if (hints.length() + global.length() + FOOTER_GAP > width) {
+            global = "";
         }
         return row(
-                text(" " + hints).fg(Color.CYAN),
+                text(" " + Ui.truncate(hints, Math.max(0, width - global.length() - FOOTER_GAP))).fg(Color.CYAN),
                 spacer(),
-                text(globalKeyHints()).dim()
+                text(global).dim()
         );
     }
 
     /**
-     * The always-available, non-advanced keys. T/E/D/U/X/B (mise) and P/U (vfox) all require
-     * {@code V} first, so they live in the Advanced menu instead of cluttering this default
-     * hint line — {@code V} itself is the one thing here that points at them.
+     * Keys for the panel that actually has focus — bubbletea's "short help": the handful worth
+     * knowing here, not everything that is bound here. A panel the backend cannot serve is never
+     * focusable, so its keys never reach this line.
+     */
+    private String panelHints() {
+        SidePanels sides = ui.sidePanels();
+        if (sides.logFocused()) {
+            return "↑/↓ scroll   ←/→ pan   PgUp/PgDn page   End follow";
+        }
+        return switch (sides.focused()) {
+            case TOOLS -> "↑/↓ select   / filter   i install   u use   g global"
+                    + (ctx.supports(BackendFeature.UPGRADE) ? "   p upgrade" : "   x uninstall");
+            case TASKS -> "↑/↓ select   / filter   enter run   : args   . re-run";
+            case ENV -> "↑/↓ select   / filter   y copy value";
+            case ADVANCED -> "↑/↓ select   enter run   V hide";
+            case STATUS -> "tab next panel   1-5 jump panel";
+        };
+    }
+
+    /**
+     * The always-available, non-advanced keys. The maintenance letters (T/E/D/U/X/B, P where
+     * the backend has a plugin registry) all require {@code V} first, so they live in the
+     * Advanced panel instead of cluttering this default hint line — {@code V} itself is the one
+     * thing here that points at them.
      */
     private String globalKeyHints() {
-        if (ctx.state().vfox()) {
-            return "a add   p add plugin   e edit   A activate   V advanced   r refresh   ? help   q quit ";
-        }
-        return "a add   e edit   A activate   P upgrade-all   V advanced   r refresh   ? help   q quit ";
+        return "a add"
+                + (ctx.supports(BackendFeature.PLUGIN_REGISTRY) ? "   p plugin" : "")
+                + "   e edit   V advanced   r refresh   ? help   q quit ";
     }
 }

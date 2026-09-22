@@ -1,4 +1,4 @@
-/** Turns app state into what's on screen: the top-level dock, sidebar accordion, and modal stacking. */
+/** Turns app state into what's on screen: the panel stack, the main pane, and modal stacking. */
 @NullMarked
 package com.sampong.tambo.tui.layout;
 

@@ -3,18 +3,23 @@ package com.sampong.tambo.mise;
 import java.util.List;
 import java.util.Map;
 
-import com.sampong.tambo.mise.model.DoctorInfo;
-import com.sampong.tambo.mise.model.MiseTask;
-import com.sampong.tambo.mise.model.OutdatedTool;
-import com.sampong.tambo.mise.model.RegistryEntry;
-import com.sampong.tambo.mise.model.ToolVersion;
-import com.sampong.tambo.mise.model.TrustStatus;
+import com.sampong.tambo._common.model.BackendInfo;
+import com.sampong.tambo._common.model.CatalogEntry;
+import com.sampong.tambo._common.model.OutdatedSdk;
+import com.sampong.tambo._common.model.ProjectTask;
+import com.sampong.tambo._common.model.SdkRelease;
+import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo._common.model.TrustState;
 
 /**
- * Read-only queries against {@code mise}: turns raw CLI output (mostly {@code -J}
- * JSON) into typed data the TUI can render. Never mutates any mise state —
- * mutating operations live in {@link MiseToolService} and
- * {@link MiseMaintenanceService}.
+ * Read-only queries against {@code mise}: turns raw CLI output (mostly {@code -J} JSON) into the
+ * shared backend-neutral model in {@code _common.model}. Never mutates any mise state — mutating
+ * operations live in {@link MiseToolService} and {@link MiseMaintenanceService}.
+ * <p>
+ * Nothing here returns a mise-shaped type any more. mise's JSON is deserialized into wire DTOs
+ * private to the implementation and mapped across, so this service and
+ * {@link com.sampong.tambo.vfox.VfoxSdkBackend} hand the UI the same records — which is what
+ * lets the UI stop asking which backend it is talking to.
  */
 public interface MiseQueryService {
 
@@ -22,38 +27,36 @@ public interface MiseQueryService {
     boolean offline();
 
     /**
-     * Installed/configured tool versions via {@code mise ls -J}. In offline mode,
-     * excludes configured-but-not-yet-installed entries — nothing offline can
-     * install them anyway.
+     * Installed/configured SDK versions via {@code mise ls -J}. In offline mode, excludes
+     * configured-but-not-yet-installed entries — nothing offline can install them anyway.
      */
-    List<ToolVersion> listTools();
+    List<SdkVersion> listSdks();
 
     /**
-     * Tools with a newer version available, via {@code mise outdated -J}. Empty
-     * when everything is current, the command is unavailable, or the app is
-     * offline (checking for updates needs the network).
+     * SDKs with a newer version available, via {@code mise outdated -J}. Empty when everything
+     * is current, the command is unavailable, or the app is offline (checking needs the network).
      */
-    List<OutdatedTool> listOutdated();
+    List<OutdatedSdk> listOutdated();
 
-    List<MiseTask> listTasks();
+    List<ProjectTask> listTasks();
 
-    List<RegistryEntry> listRegistry();
+    List<CatalogEntry> listCatalog();
 
     Map<String, String> listEnv();
 
     /**
-     * Lists the installable versions of a tool via {@code mise ls-remote <tool>},
-     * newest first, always prefixed with the synthetic {@code "latest"} entry.
+     * The installable versions of an SDK via {@code mise ls-remote <sdk>}, newest first, always
+     * led by mise's synthetic {@code latest} entry. Versions already on disk are marked as such
+     * from what {@code mise ls -J} reports.
      */
-    List<String> listRemoteVersions(String tool);
+    List<SdkRelease> listReleases(String sdk);
 
-    /** A compact health summary parsed out of {@code mise doctor} plain-text output. */
-    DoctorInfo doctorSummary();
+    /** Version plus the health summary parsed out of {@code mise doctor}'s plain-text output. */
+    BackendInfo info();
 
     /**
-     * The trust state of every config directory {@code mise trust --show} reports
-     * for the working directory and its parents. Empty when mise is unavailable
-     * or the output could not be parsed.
+     * The trust state of every config directory {@code mise trust --show} reports for the
+     * working directory and its parents. Empty when mise is unavailable or unparseable.
      */
-    List<TrustStatus> trustStatus();
+    List<TrustState> trustStatus();
 }

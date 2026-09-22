@@ -1,7 +1,9 @@
 package com.sampong.tambo.tui.state;
 
+import com.sampong.tambo._common.model.BackendFeature;
+import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.tui.MiseTuiApp;
-import com.sampong.tambo.tui.features.MiseActions;
+import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.features.Theme;
 
 import org.jspecify.annotations.Nullable;
@@ -14,7 +16,21 @@ public interface UiContext {
 
     UiState state();
 
-    MiseActions actions();
+    BackendActions actions();
+
+    /** The version manager this session is driving. */
+    default SdkVersionBackend backend() {
+        return state().backend();
+    }
+
+    /**
+     * Whether the active backend can do {@code feature}. Every surface that used to ask "is
+     * this vfox?" asks this instead, so the two backends differ in the UI only where they
+     * genuinely differ — and a backend that gains a feature needs no change in any panel.
+     */
+    default boolean supports(BackendFeature feature) {
+        return backend().supports(feature);
+    }
 
     /** The active colour palette; panels read border/highlight colours from it. */
     Theme theme();
@@ -29,7 +45,7 @@ public interface UiContext {
 
     void clearFocus();
 
-    /** True while the registry modal is open (sidebar panels leave the focus chain). */
+    /** True while no modal is open (panels leave the focus chain while one is). */
     boolean modalOpen();
 
     /**

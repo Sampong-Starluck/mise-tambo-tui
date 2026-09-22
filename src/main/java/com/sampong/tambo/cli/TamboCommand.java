@@ -4,6 +4,7 @@ import org.jspecify.annotations.Nullable;
 
 import dev.tamboui.picocli.TuiMixin;
 
+import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IVersionProvider;
 import picocli.CommandLine.Mixin;
@@ -26,6 +27,7 @@ import picocli.CommandLine.Option;
 @Command(name = "mise-tambo", mixinStandardHelpOptions = true,
         versionProvider = TamboCommand.ManifestVersionProvider.class,
         description = "A lazygit-style terminal UI for mise and vfox.")
+@Component
 public final class TamboCommand {
 
     public enum Backend { mise, vfox }

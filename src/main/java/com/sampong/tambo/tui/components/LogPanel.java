@@ -27,13 +27,14 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Panel 5 — the command log: every {@code mise} invocation this app makes, echoed
+ * The command log — every backend invocation this app makes, echoed
  * the way lazygit echoes its {@code git} calls. Sticky-scrolls to the newest entry.
  * <p>
  * Focus it (click, or {@code 5}) and scroll: ↑/↓, PgUp/PgDn, Home vertically —
  * End resumes following the newest entry — and ←/→ or h/l pan long lines
- * horizontally. The mouse wheel scrolls vertically over the panel even when it
- * is not focused.
+ * horizontally. The mouse wheel works over the panel even when it is not
+ * focused: vertically as always, and horizontally too on terminals that report
+ * it, which TamboUI delivers as of 0.5.0.
  */
 @RequiredArgsConstructor
 public final class LogPanel {
@@ -64,7 +65,7 @@ public final class LogPanel {
         index = followTail ? entries.size() - 1 : Ui.clamp(index, entries.size());
 
         ListElement<?> list = list()
-                .title("[5] Command Log" + (offset > 0 ? "  →" + offset : ""))
+                .title(" [5] Command Log" + (offset > 0 ? " →" + offset : "") + " ")
                 .rounded().id(PanelIds.LOG).focusable(ctx.modalOpen())
                 .borderColor(focused ? ctx.theme().focus() : ctx.theme().idle())
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
@@ -95,6 +96,18 @@ public final class LogPanel {
                     if (event.kind() == MouseEventKind.SCROLL_DOWN) {
                         index = Ui.clamp(index + WHEEL_STEP, entries.size());
                         followTail = index >= entries.size() - 1;
+                        return EventResult.HANDLED;
+                    }
+                    // Horizontal wheel / trackpad swipe, delivered since TamboUI 0.5.0. Panning
+                    // already existed on ←/→ and h/l; this just gives it the matching gesture,
+                    // and it is the natural one for the long streamed build lines this panel
+                    // shows. Same step as the keys so both feel identical.
+                    if (event.kind() == MouseEventKind.SCROLL_LEFT) {
+                        ctx.state().logHScroll(offset - H_STEP);
+                        return EventResult.HANDLED;
+                    }
+                    if (event.kind() == MouseEventKind.SCROLL_RIGHT) {
+                        ctx.state().logHScroll(offset + H_STEP);
                         return EventResult.HANDLED;
                     }
                     return EventResult.UNHANDLED;
