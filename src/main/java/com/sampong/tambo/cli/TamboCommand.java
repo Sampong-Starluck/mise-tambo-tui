@@ -4,6 +4,8 @@ import org.jspecify.annotations.Nullable;
 
 import dev.tamboui.picocli.TuiMixin;
 
+import com.sampong.tambo._common.util.AppVersion;
+
 import org.springframework.stereotype.Component;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.IVersionProvider;
@@ -47,6 +49,12 @@ public final class TamboCommand {
             description = "Start the session with the Advanced panel already unlocked, same as pressing V.")
     private boolean advancedFeatures;
 
+    @Option(names = "--auto-install",
+            description = "On startup, apply the project's mise.toml/.vfox.toml: install what is "
+                    + "missing and ask which version to use where an installed one is close but not "
+                    + "equal. Same as pressing I.")
+    private boolean autoInstall;
+
     /** TamboUI's TUI flags (--no-alt-screen, --show-cursor, --mouse, --tick-rate, --poll-timeout). */
     @Mixin
     private final TuiMixin tuiOptions = new TuiMixin();
@@ -63,6 +71,10 @@ public final class TamboCommand {
         return advancedFeatures;
     }
 
+    public boolean autoInstall() {
+        return autoInstall;
+    }
+
     public TuiMixin tuiOptions() {
         return tuiOptions;
     }
@@ -70,8 +82,7 @@ public final class TamboCommand {
     static final class ManifestVersionProvider implements IVersionProvider {
         @Override
         public String[] getVersion() {
-            String version = TamboCommand.class.getPackage().getImplementationVersion();
-            return new String[] { "mise-tambo " + (version != null ? version : "development") };
+            return new String[] { "mise-tambo " + AppVersion.get() };
         }
     }
 }

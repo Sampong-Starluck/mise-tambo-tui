@@ -3,6 +3,7 @@ package com.sampong.tambo.tui.features;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,13 +15,16 @@ import java.util.stream.Collectors;
 import org.springframework.core.task.AsyncTaskExecutor;
 
 import com.sampong.tambo._common.base.CancelRegistry;
+import com.sampong.tambo._common.model.AutoInstallStep;
 import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo._common.model.OutdatedSdk;
 import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo._common.model.SdkRelease;
 import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo._common.service.AutoInstallPlanner;
 import com.sampong.tambo._common.service.SdkVersionBackend;
+import com.sampong.tambo._common.util.ProjectToolsReader;
 import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
@@ -323,6 +327,235 @@ public final class BackendActions {
                     logResult(result, "Upgraded all outdated tools", "Upgrade failed");
                     refresh();
                 });
+    }
+
+    // ==================== Auto-install from the project config ====================
+
+    /** Busy key for both phases of auto-install; also what {@code C} cancels it under. */
+    private static final String AUTO_INSTALL_KEY = "auto-install";
+
+    /**
+     * Brings the project in line with its own config: reads the {@code [tools]} table, compares
+     * it against what is installed, and applies the difference.
+     * <p>
+     * The comparison is the interesting part, and it is
+     * {@link AutoInstallPlanner}'s: a tool whose config version is already on disk needs at most
+     * a pin, one with nothing close needs a download, and one where the two differ by a patch
+     * or a minor — 25.0.3 installed against a config asking for 25.0.4 — is a question rather
+     * than a decision this can make, so it goes through {@code prompt} first. That case is not
+     * special-cased per SDK; it is whatever the planner's same-vendor, same-major rule matches,
+     * for every tool the config declares.
+     * <p>
+     * Nothing runs until every question is answered, so the command log reads as one operation
+     * rather than as installs interleaved with dialogs.
+     * <p>
+     * Offline it still runs, against what is already on disk: a tool whose config version is
+     * missing is offered the installed versions of that tool, closest first, and whichever the
+     * user picks is pinned — a local config edit, no download. A tool with nothing installed is
+     * reported as unavailable rather than attempted.
+     */
+    public void autoInstall(@NonNull AutoInstallPrompt prompt) {
+        if (state.markBusy(AUTO_INSTALL_KEY)) {
+            return;
+        }
+        String configName = backend.projectConfigFileName();
+        boolean offline = state.offline();
+        state.addLog(LogLevel.CMD, "$ auto-install — reading " + configName
+                + (offline ? " (offline: using installed versions only)" : ""));
+        submitBackground("auto-install", AUTO_INSTALL_KEY,
+                () -> AutoInstallPlanner.plan(ProjectToolsReader.read(projectConfigPath()), backend.listSdks(), offline),
+                steps -> onPlanned(steps, prompt));
+    }
+
+    /**
+     * The version the project config declares for {@code sdk}, or null when it declares none.
+     * Matched case-insensitively: vfox lower-cases the names it lists, while the config keeps
+     * whatever spelling the project wrote. A single small file read, so fine on the render thread.
+     */
+    public @Nullable String declaredVersion(@NonNull String sdk) {
+        for (Map.Entry<String, String> tool : ProjectToolsReader.read(projectConfigPath()).entrySet()) {
+            if (tool.getKey().equalsIgnoreCase(sdk)) {
+                return tool.getValue();
+            }
+        }
+        return null;
+    }
+
+    /** The project config this backend reads, in the directory tambo was launched from. */
+    private Path projectConfigPath() {
+        return Path.of("").toAbsolutePath().resolve(backend.projectConfigFileName());
+    }
+
+    /**
+     * Reports the plan, then either asks about its near-misses or goes straight to running it.
+     * Runs on the render thread — it may open a modal.
+     */
+    private void onPlanned(List<AutoInstallStep> steps, AutoInstallPrompt prompt) {
+        String configName = backend.projectConfigFileName();
+        if (steps.isEmpty()) {
+            state.addLog(LogLevel.INFO, "No tools declared in " + configName + " — nothing to install");
+            return;
+        }
+        long satisfied = steps.stream().filter(s -> s.status() == AutoInstallStep.Status.SATISFIED).count();
+        List<AutoInstallStep> undecided = steps.stream()
+                .filter(s -> s.status() == AutoInstallStep.Status.SIMILAR
+                        || s.status() == AutoInstallStep.Status.SUBSTITUTE)
+                .toList();
+        long toFetch = steps.stream().filter(s -> s.status() == AutoInstallStep.Status.MISSING).count();
+        state.addLog(LogLevel.INFO, configName + " declares " + steps.size() + " tool(s): "
+                + satisfied + " already installed, " + toFetch
+                + (state.offline() ? " not installed and unavailable offline, " : " to install, ")
+                + undecided.size() + " to choose");
+
+        if (undecided.isEmpty()) {
+            runPlan(steps, Map.of());
+            return;
+        }
+        prompt.ask(undecided,
+                choices -> runPlan(steps, choices),
+                () -> state.addLog(LogLevel.INFO, "Auto-install cancelled"));
+    }
+
+    /**
+     * Turns a plan plus the user's answers into commands and runs them in order: pins first,
+     * then installs, so a bulk install sees a config that already reflects every reused version.
+     * <p>
+     * Only an explicit "keep what is installed" answer produces a pin, because a pin rewrites
+     * the config. A tool the config is already satisfied by is left completely alone: pinning
+     * it would replace whatever the project wrote — a {@code ["20", "18"]} fallback list, a
+     * {@code "latest"} — with the single concrete version that happens to be on this machine,
+     * which is a change to the project nobody asked for.
+     *
+     * @param chosen the version to apply per SDK for the steps that needed a question; an SDK
+     *               the user skipped is absent
+     */
+    private void runPlan(List<AutoInstallStep> steps, Map<String, String> chosen) {
+        AutoInstallCommands commands = new AutoInstallCommands();
+        for (AutoInstallStep step : steps) {
+            resolve(step, chosen.get(step.sdk()), commands);
+        }
+        if (commands.isEmpty()) {
+            state.addLog(commands.skipped > 0 ? LogLevel.INFO : LogLevel.OK, commands.skipped > 0
+                    ? "Nothing applied — " + commands.skipped + " tool(s) skipped or unavailable"
+                    : "Nothing to do — the project already matches " + backend.projectConfigFileName());
+            return;
+        }
+        execute(commands);
+    }
+
+    /** What a plan comes down to: versions to pin in the config, versions to install, and how many were left out. */
+    private static final class AutoInstallCommands {
+        private final List<String> pins = new ArrayList<>();
+        private final List<String> installs = new ArrayList<>();
+        private int skipped;
+
+        boolean isEmpty() {
+            return pins.isEmpty() && installs.isEmpty();
+        }
+    }
+
+    /**
+     * Adds one step's command to {@code commands}. {@code version} is the user's answer for a
+     * step that needed a question, or null when they skipped it (or it needed none).
+     */
+    private void resolve(AutoInstallStep step, @Nullable String version, AutoInstallCommands commands) {
+        switch (step.status()) {
+            case SATISFIED -> {
+                // Already answered by something on disk — see the note on runPlan.
+            }
+            case MISSING -> resolveMissing(step, commands);
+            case SUBSTITUTE, SIMILAR -> resolveAnswered(step, version, commands);
+        }
+    }
+
+    /** A tool with nothing usable on disk: installed from the config, unless offline. */
+    private void resolveMissing(AutoInstallStep step, AutoInstallCommands commands) {
+        if (state.offline()) {
+            state.addLog(LogLevel.ERROR, "Auto-install — " + step.requestedLabel()
+                    + " is not installed and cannot be downloaded offline");
+            commands.skipped++;
+        } else {
+            commands.installs.add(step.requestedLabel());
+        }
+    }
+
+    /**
+     * A tool the user was asked about. A substitute is by definition already on disk, and
+     * keeping an installed similar version means the config has to change (the user chose that
+     * when they answered) — both are pins. Anything else is a version still to download.
+     */
+    private static void resolveAnswered(AutoInstallStep step, @Nullable String version, AutoInstallCommands commands) {
+        if (version == null) {
+            commands.skipped++;
+            return;
+        }
+        boolean onDisk = step.status() == AutoInstallStep.Status.SUBSTITUTE
+                || version.equals(step.installedVersion());
+        (onDisk ? commands.pins : commands.installs).add(step.sdk() + "@" + version);
+    }
+
+    /**
+     * Runs the whole plan on one background task, so its commands and their streamed output
+     * reach the log in the order they happened rather than racing each other.
+     * <p>
+     * The install phase has two shapes. Where the backend can install a whole config at once
+     * ({@code mise install}) that is one command for every missing tool, and it installs the
+     * versions the config already names rather than rewriting anything — but only when nothing
+     * was skipped, since it would happily install the very tool the user just declined. vfox has
+     * no such command, and a skip rules the bulk form out anyway, so the fallback applies each
+     * tool individually with {@code use}, which installs and pins it at project scope.
+     */
+    private void execute(AutoInstallCommands commands) {
+        if (state.markBusy(AUTO_INSTALL_KEY)) {
+            return;
+        }
+        boolean bulk = !commands.installs.isEmpty() && commands.skipped == 0
+                && backend.supports(BackendFeature.BULK_INSTALL);
+        String installPart = bulk
+                ? backend.name() + " install for " + commands.installs.size()
+                : commands.installs.size() + " to install";
+        String skippedPart = commands.skipped > 0 ? " (" + commands.skipped + " skipped)" : "";
+        state.addLog(LogLevel.CMD, "$ auto-install — " + commands.pins.size() + " to pin, "
+                + installPart + skippedPart);
+        Consumer<String> onLine = liveLogLine(AUTO_INSTALL_KEY);
+
+        submitBackground("auto-install", AUTO_INSTALL_KEY,
+                () -> applyAutoInstall(commands, bulk, onLine),
+                this::reportAutoInstall);
+    }
+
+    /** The background half of {@link #execute}: pins, then installs. Returns one line per failure. */
+    private List<String> applyAutoInstall(AutoInstallCommands commands, boolean bulk, Consumer<String> onLine) {
+        List<String> failures = new ArrayList<>();
+        for (String label : commands.pins) {
+            CliResult result = backend.pin(label, false);
+            onLine.accept(result.ok() ? "pinned " + label : "could not pin " + label);
+            recordFailure(failures, label, result);
+        }
+        if (bulk) {
+            recordFailure(failures, backend.name() + " install", backend.installAll(onLine, AUTO_INSTALL_KEY));
+        } else {
+            for (String label : commands.installs) {
+                recordFailure(failures, label, backend.use(label, false, onLine, AUTO_INSTALL_KEY));
+            }
+        }
+        return failures;
+    }
+
+    private static void recordFailure(List<String> failures, String what, CliResult result) {
+        if (!result.ok()) {
+            failures.add(what + ": " + result.summaryLine());
+        }
+    }
+
+    private void reportAutoInstall(List<String> failures) {
+        if (failures.isEmpty()) {
+            state.addLog(LogLevel.OK, "Auto-install finished — project matches "
+                    + backend.projectConfigFileName());
+        } else {
+            failures.forEach(failure -> state.addLog(LogLevel.ERROR, "Auto-install — " + failure));
+        }
+        refresh();
     }
 
     // ==================== Cancellation ====================

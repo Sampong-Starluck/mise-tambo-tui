@@ -153,20 +153,45 @@ public final class ToolsPanel {
      */
     private Row toolRow(SdkVersion sdk) {
         boolean busy = isBusy(sdk);
-        Color stateColor = sdk.active() ? Color.CYAN : sdk.installed() ? Color.GREEN : Color.DARK_GRAY;
-        String badge = busy ? Ui.spinner() : sdk.active() ? "●" : sdk.installed() ? "✓" : "○";
+        Color stateColor = stateColor(sdk);
         String latest = ctx.state().outdated().get(sdk.name());
-        String statusText = busy ? busyText(sdk)
-                : latest != null ? "↑ " + latest
-                : !sdk.hasVersion() ? "no version"
-                : sdk.active() ? "active" : sdk.installed() ? "" : "not installed";
         Color statusColor = busy || latest != null ? Color.YELLOW : stateColor;
 
         return Row.from(
-                Cell.from(badge + " " + sdk.name()).style(Style.create().fg(stateColor)),
+                Cell.from((busy ? Ui.spinner() : stateBadge(sdk)) + " " + sdk.name())
+                        .style(Style.create().fg(stateColor)),
                 Cell.from(sdk.hasVersion() ? sdk.version() : "-"),
-                Cell.from(statusText).style(Style.create().fg(statusColor))
+                Cell.from(busy ? busyText(sdk) : statusText(sdk, latest))
+                        .style(Style.create().fg(statusColor))
         );
+    }
+
+    private static Color stateColor(SdkVersion sdk) {
+        if (sdk.active()) {
+            return Color.CYAN;
+        }
+        return sdk.installed() ? Color.GREEN : Color.DARK_GRAY;
+    }
+
+    private static String stateBadge(SdkVersion sdk) {
+        if (sdk.active()) {
+            return "●";
+        }
+        return sdk.installed() ? "✓" : "○";
+    }
+
+    /** The status column when nothing is running: an available upgrade outranks the tool's own state. */
+    private static String statusText(SdkVersion sdk, @Nullable String latest) {
+        if (latest != null) {
+            return "↑ " + latest;
+        }
+        if (!sdk.hasVersion()) {
+            return "no version";
+        }
+        if (sdk.active()) {
+            return "active";
+        }
+        return sdk.installed() ? "" : "not installed";
     }
 
     private boolean isBusy(SdkVersion sdk) {
@@ -202,71 +227,79 @@ public final class ToolsPanel {
             return EventResult.UNHANDLED;
         }
         SdkVersion sdk = items.get(selectedIndex(items.size()));
-        if (event.isChar('i')) {
-            // An SDK registered with no version installed has no name@version to install, so
-            // "install" means "pick a version" — the catalog modal's version step.
-            if (sdk.hasVersion()) {
-                ctx.actions().installSdk(sdk);
-            } else {
-                ctx.promptVersionFor(sdk.name());
+        return handleRowKey(event, sdk) ? EventResult.HANDLED : EventResult.UNHANDLED;
+    }
+
+    /** The per-row actions, all on the selected tool; {@code Delete} is an alias for {@code x}. */
+    private boolean handleRowKey(KeyEvent event, SdkVersion sdk) {
+        String key = event.code() == KeyCode.DELETE ? "x" : event.string();
+        switch (key) {
+            case "i" -> install(sdk);
+            // Apply to the project: writes sdk@version into the project config.
+            case "u" -> use(sdk, false);
+            case "g" -> use(sdk, true);
+            case "x" -> whenAdvanced("Uninstall", sdk.installed(),
+                    () -> ctx.confirm("Uninstall " + sdk.label() + "?", () -> ctx.actions().uninstallSdk(sdk)));
+            case "R" -> whenAdvanced("Remove from config", sdk.pinned(),
+                    () -> ctx.confirm("Remove " + sdk.label() + " from " + ctx.backend().projectConfigFileName() + "?",
+                            () -> ctx.actions().removeSdk(sdk)));
+            // How destructive this is differs per backend, so the warning is the backend's own
+            // sentence rather than a branch on which one is active.
+            case "d" -> whenAdvanced("Remove plugin", true,
+                    () -> ctx.confirm(ctx.backend().removePluginWarning(sdk.name()),
+                            () -> ctx.actions().removePlugin(sdk)));
+            case "c" -> ctx.actions().cancelSdk(sdk);
+            case "p" -> {
+                if (!ctx.supports(BackendFeature.UPGRADE)) {
+                    return false;
+                }
+                ctx.actions().upgradeSdk(sdk);
             }
-            return EventResult.HANDLED;
-        }
-        if (event.isChar('u')) {
-            // Apply to the project: writes sdk@version into the project config
-            if (sdk.hasVersion()) {
-                ctx.actions().useSdk(sdk.label(), false);
-            } else {
-                ctx.state().addLog(LogLevel.INFO,
-                        "No version of " + sdk.name() + " installed yet — press i to pick one");
+            default -> {
+                return false;
             }
-            return EventResult.HANDLED;
         }
-        if (event.isChar('x') || event.code() == KeyCode.DELETE) {
-            if (!ctx.state().advancedFeatures()) {
-                ctx.state().addLog(LogLevel.INFO, "Uninstall is an advanced feature — press V to enable it");
-            } else if (sdk.installed()) {
-                ctx.confirm("Uninstall " + sdk.label() + "?", () -> ctx.actions().uninstallSdk(sdk));
-            }
-            return EventResult.HANDLED;
+        return true;
+    }
+
+    /**
+     * An SDK registered with no version installed has no name@version of its own. If the
+     * project config declares one, that is the version meant: install it and pin it at project
+     * scope ({@code vfox use -p sdk@version}). Otherwise "install" means "pick a version" — the
+     * catalog modal's version step.
+     */
+    private void install(SdkVersion sdk) {
+        if (sdk.hasVersion()) {
+            ctx.actions().installSdk(sdk);
+            return;
         }
-        if (event.isChar('R')) {
-            if (!ctx.state().advancedFeatures()) {
-                ctx.state().addLog(LogLevel.INFO, "Remove from config is an advanced feature — press V to enable it");
-            } else if (sdk.pinned()) {
-                ctx.confirm("Remove " + sdk.label() + " from " + ctx.backend().projectConfigFileName() + "?",
-                        () -> ctx.actions().removeSdk(sdk));
-            }
-            return EventResult.HANDLED;
+        String declared = ctx.actions().declaredVersion(sdk.name());
+        if (declared != null) {
+            ctx.actions().useSdk(sdk.name() + "@" + declared, false);
+        } else {
+            ctx.promptVersionFor(sdk.name());
         }
-        if (event.isChar('d')) {
-            if (!ctx.state().advancedFeatures()) {
-                ctx.state().addLog(LogLevel.INFO, "Remove plugin is an advanced feature — press V to enable it");
-            } else {
-                // How destructive this is differs per backend, so the warning is the
-                // backend's own sentence rather than a branch on which one is active.
-                ctx.confirm(ctx.backend().removePluginWarning(sdk.name()),
-                        () -> ctx.actions().removePlugin(sdk));
-            }
-            return EventResult.HANDLED;
+    }
+
+    /** Pins the selected version, project-wide or globally; there is nothing to pin without one. */
+    private void use(SdkVersion sdk, boolean global) {
+        if (sdk.hasVersion()) {
+            ctx.actions().useSdk(sdk.label(), global);
+        } else {
+            ctx.state().addLog(LogLevel.INFO,
+                    "No version of " + sdk.name() + " installed yet — press i to pick one");
         }
-        if (event.isChar('g')) {
-            if (sdk.hasVersion()) {
-                ctx.actions().useSdk(sdk.label(), true);
-            } else {
-                ctx.state().addLog(LogLevel.INFO,
-                        "No version of " + sdk.name() + " installed yet — press i to pick one");
-            }
-            return EventResult.HANDLED;
+    }
+
+    /**
+     * Runs a destructive row action when advanced features are on and it {@code applies} to this
+     * row; with them off, nudges toward {@code V} instead.
+     */
+    private void whenAdvanced(String label, boolean applies, Runnable action) {
+        if (!ctx.state().advancedFeatures()) {
+            ctx.state().addLog(LogLevel.INFO, label + " is an advanced feature — press V to enable it");
+        } else if (applies) {
+            action.run();
         }
-        if (event.isChar('p') && ctx.supports(BackendFeature.UPGRADE)) {
-            ctx.actions().upgradeSdk(sdk);
-            return EventResult.HANDLED;
-        }
-        if (event.isChar('c')) {
-            ctx.actions().cancelSdk(sdk);
-            return EventResult.HANDLED;
-        }
-        return EventResult.UNHANDLED;
     }
 }

@@ -13,7 +13,6 @@ import java.util.function.IntFunction;
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.event.EventResult;
-import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
 
@@ -53,6 +52,8 @@ public final class AddPluginModal {
 
     private static final int VISIBLE_ROWS = 10;
     private static final int WIDTH = 76;
+    /** Columns the dialog's border and padding leave for text. */
+    private static final int TEXT_WIDTH = WIDTH - 4;
 
     @NonNull
     private final UiContext ctx;
@@ -113,19 +114,14 @@ public final class AddPluginModal {
         ));
         content.add(text(""));
 
-        Lazy<List<CatalogEntry>> registry = ctx.state().catalogLazy();
-        if (ctx.state().catalog().isEmpty()) {
-            content.add(text(registry.everLoaded() || registry.failed()
-                    ? (ctx.state().advancedFeatures()
-                            ? "Catalog unavailable — type a name and flags to add it directly"
-                            : "Catalog unavailable")
-                    : "Loading catalog…").dim());
-        } else if (matches.isEmpty()) {
-            content.add(text(ctx.state().advancedFeatures()
-                    ? "No catalog match — enter adds \"" + query + "\" as typed"
-                    : "No catalog match — --alias/--source needs advanced features (V)").dim());
+        String emptyMessage = emptyListMessage(query, matches);
+        if (emptyMessage != null) {
+            addWrapped(content, emptyMessage);
         } else {
             addWindowedRows(content, matches.size(), i -> pluginRow(matches, i));
+            // The rows cut descriptions to fit; the highlighted one is shown whole, wrapped.
+            content.add(text(""));
+            addWrapped(content, Ui.nullToDash(matches.get(index).description()));
         }
 
         content.add(text(""));
@@ -134,6 +130,27 @@ public final class AddPluginModal {
         return dialog("Add vfox plugin — available (" + ctx.state().catalog().size() + ")",
                 content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
+    }
+
+    /**
+     * Why the list has nothing to show, or null when it does. With advanced features on, typed
+     * text that matches nothing is still addable as-is, and the message says so.
+     */
+    private @Nullable String emptyListMessage(String query, List<CatalogEntry> matches) {
+        boolean advanced = ctx.state().advancedFeatures();
+        if (ctx.state().catalog().isEmpty()) {
+            Lazy<List<CatalogEntry>> registry = ctx.state().catalogLazy();
+            if (!registry.everLoaded() && !registry.failed()) {
+                return "Loading catalog…";
+            }
+            return advanced ? "Catalog unavailable — type a name and flags to add it directly" : "Catalog unavailable";
+        }
+        if (!matches.isEmpty()) {
+            return null;
+        }
+        return advanced
+                ? "No catalog match — enter adds \"" + query + "\" as typed"
+                : "No catalog match — --alias/--source needs advanced features (V)";
     }
 
     private Element pluginRow(List<CatalogEntry> matches, int i) {
@@ -145,6 +162,13 @@ public final class AddPluginModal {
                 spacer(),
                 text(Ui.truncate(Ui.nullToDash(e.description()), 40) + " ").dim()
         );
+    }
+
+    /** Dimmed free text, word-wrapped to the dialog — one element per line. */
+    private static void addWrapped(List<Element> content, String text) {
+        for (String line : Ui.wordWrap(text, TEXT_WIDTH)) {
+            content.add(text(line).dim());
+        }
     }
 
     /** Renders a window of VISIBLE_ROWS rows that follows the selection. */
@@ -171,22 +195,9 @@ public final class AddPluginModal {
             confirm();
             return EventResult.HANDLED;
         }
-        int total = fuzzyPlugins(search.text()).size();
-        if (event.code() == KeyCode.UP) {
-            index = Ui.clamp(index - 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.DOWN) {
-            index = Ui.clamp(index + 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_UP) {
-            index = Ui.clamp(index - VISIBLE_ROWS, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_DOWN) {
-            index = Ui.clamp(index + VISIBLE_ROWS, total);
-            return EventResult.HANDLED;
+        int step = Ui.listStep(event, VISIBLE_ROWS);
+        if (step != 0) {
+            index = Ui.clamp(index + step, fuzzyPlugins(search.text()).size());
         }
         // Typing is applied by the input itself; swallow the rest so no panel
         // shortcut fires under the prompt.

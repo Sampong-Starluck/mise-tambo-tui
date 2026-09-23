@@ -138,6 +138,29 @@ public interface SdkVersionBackend {
     CliResult use(String sdkAtVersion, boolean global, Consumer<String> onLine, String cancelKey);
 
     /**
+     * Pins an <em>already-installed</em> {@code sdk@version} at project or global scope without
+     * installing anything.
+     * <p>
+     * The distinction from {@link #use} is the whole point: {@code use} means "make this the
+     * version, fetching it if necessary", and under vfox that is literally
+     * {@code add} + {@code install} + {@code use}. This means "adopt what is already on disk",
+     * which is what the auto-install flow needs when the user answers a near-miss by keeping
+     * the version they have — running {@code use} there would re-run an install for a version
+     * that is already present. Not streamed: nothing is downloaded, so there is no progress to
+     * report.
+     */
+    CliResult pin(String sdkAtVersion, boolean global);
+
+    /**
+     * Installs every tool the project config declares, in one command. Requires
+     * {@link BackendFeature#BULK_INSTALL}; a backend without it is driven one tool at a time
+     * through {@link #use} instead.
+     */
+    default CliResult installAll(Consumer<String> onLine, String cancelKey) {
+        return unsupported(BackendFeature.BULK_INSTALL);
+    }
+
+    /**
      * Upgrades one SDK to the newest version its config allows, or every outdated SDK when
      * {@code sdk} is blank. Requires {@link BackendFeature#UPGRADE}.
      */

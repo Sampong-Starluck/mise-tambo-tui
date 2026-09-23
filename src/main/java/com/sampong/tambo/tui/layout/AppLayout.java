@@ -20,6 +20,7 @@ import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.element.StyledElement;
 
 import com.sampong.tambo._common.model.BackendFeature;
+import com.sampong.tambo._common.util.AppVersion;
 import com.sampong.tambo.tui.TuiComponents;
 import com.sampong.tambo.tui.components.AdvancedPanel;
 import com.sampong.tambo.tui.components.SidePanels;
@@ -115,6 +116,9 @@ public final class AppLayout {
         if (ui.addPluginModal().isOpen()) {
             return stack(body, ui.addPluginModal().build());
         }
+        if (ui.autoInstallModal().isOpen()) {
+            return stack(body, ui.autoInstallModal().build());
+        }
         return body;
     }
 
@@ -133,7 +137,7 @@ public final class AppLayout {
             int stackHeight = bodyHeight * MAIN_WEIGHT / (MAIN_WEIGHT + LOG_WEIGHT);
             return column(
                     buildSidebar(stackHeight, actions).constraint(fill(MAIN_WEIGHT)),
-                    ui.logPanel().build().constraint(fill(LOG_WEIGHT)));
+                    ui.logPanel().build(width).constraint(fill(LOG_WEIGHT)));
         }
 
         int sidebarWidth = Math.clamp(width * SIDEBAR_PERCENT / 100L,
@@ -142,7 +146,7 @@ public final class AppLayout {
                 buildSidebar(bodyHeight, actions).constraint(length(sidebarWidth)),
                 column(
                         ui.detailPanel().build(width - sidebarWidth, actions).constraint(fill(MAIN_WEIGHT)),
-                        ui.logPanel().build().constraint(fill(LOG_WEIGHT))
+                        ui.logPanel().build(width - sidebarWidth).constraint(fill(LOG_WEIGHT))
                 ).constraint(fill()));
     }
 
@@ -202,6 +206,7 @@ public final class AppLayout {
             // No health report behind this backend — its version is all there is to badge.
             return row(
                     text(" tambo ").bold().cyan(),
+                    appVersion(),
                     text("— a TUI for " + name).dim(),
                     spacer(),
                     activity,
@@ -212,6 +217,7 @@ public final class AppLayout {
         if (!known) {
             return row(
                     text(" tambo ").bold().cyan(),
+                    appVersion(),
                     text("— a TUI for " + name).dim(),
                     spacer(),
                     activity,
@@ -221,12 +227,22 @@ public final class AppLayout {
         boolean activated = ctx.state().backendInfo().activated();
         return row(
                 text(" tambo ").bold().cyan(),
+                appVersion(),
                 text("— a TUI for " + name).dim(),
                 spacer(),
                 activity,
                 text(name + " " + ctx.state().backendInfo().version() + "  ").dim(),
                 text(activated ? "activated" : "not activated").fg(activated ? Color.GREEN : Color.YELLOW)
         );
+    }
+
+    /**
+     * tambo's own version beside its name — the same string {@code --version} prints, so a
+     * screenshot of the header says which build it came from.
+     */
+    private static Element appVersion() {
+        String version = AppVersion.get();
+        return text((AppVersion.DEVELOPMENT.equals(version) ? "dev" : "v" + version) + " ").cyan();
     }
 
     private Element buildFooter() {
@@ -239,6 +255,8 @@ public final class AppLayout {
             hints = ui.taskArgsModal().footerHint();
         } else if (ui.addPluginModal().isOpen()) {
             hints = ui.addPluginModal().footerHint();
+        } else if (ui.autoInstallModal().isOpen()) {
+            hints = ui.autoInstallModal().footerHint();
         } else if (ui.registryModal().isOpen()) {
             hints = ui.registryModal().footerHint();
         } else if (ui.configEditor().isOpen()) {
@@ -271,7 +289,7 @@ public final class AppLayout {
     private String panelHints() {
         SidePanels sides = ui.sidePanels();
         if (sides.logFocused()) {
-            return "↑/↓ scroll   ←/→ pan   PgUp/PgDn page   End follow";
+            return "↑/↓ scroll   PgUp/PgDn page   End follow";
         }
         return switch (sides.focused()) {
             case TOOLS -> "↑/↓ select   / filter   i install   u use   g global"
@@ -292,6 +310,6 @@ public final class AppLayout {
     private String globalKeyHints() {
         return "a add"
                 + (ctx.supports(BackendFeature.PLUGIN_REGISTRY) ? "   p plugin" : "")
-                + "   e edit   V advanced   r refresh   ? help   q quit ";
+                + "   I apply config   e edit   V advanced   r refresh   ? help   q quit ";
     }
 }

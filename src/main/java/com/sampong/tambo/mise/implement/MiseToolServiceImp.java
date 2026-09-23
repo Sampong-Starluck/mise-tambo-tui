@@ -34,6 +34,11 @@ public class MiseToolServiceImp implements MiseToolService {
     }
 
     @Override
+    public CliResult installAll(@NonNull Consumer<String> onLine, @NonNull String cancelKey) {
+        return cli.runStreaming(List.of("install"), Duration.ofMinutes(30), onLine, cancelKey);
+    }
+
+    @Override
     public CliResult uninstall(@NonNull String toolAtVersion) {
         return cli.run(List.of("uninstall", toolAtVersion), Duration.ofMinutes(2));
     }
@@ -77,6 +82,17 @@ public class MiseToolServiceImp implements MiseToolService {
         }
         args.add(toolAtVersion);
         return cli.runStreaming(args, Duration.ofMinutes(10), onLine, cancelKey);
+    }
+
+    @Override
+    public CliResult pin(@NonNull String toolAtVersion, boolean global) {
+        List<String> args = new ArrayList<>();
+        args.add("use");
+        if (global) {
+            args.add("-g");
+        }
+        args.add(toolAtVersion);
+        return cli.run(args, Duration.ofMinutes(1));
     }
 
     @Override

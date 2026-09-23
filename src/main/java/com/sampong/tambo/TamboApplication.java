@@ -43,8 +43,8 @@ public class TamboApplication {
 
     /**
      * Parses and validates {@code args} with picocli first (giving {@code --help}/{@code --version}
-     * and validated errors on bad input), then boots Spring directly rather than through picocli's
-     * {@code execute()} — see {@link TamboCommand}'s class javadoc for why that distinction matters
+     * and validated errors on bad input), then boots Spring directly rather than through Picocli's
+     * {@code execute()} — see {@link TamboCommand}'s class Javadoc for why that distinction matters
      * for the native-image AOT build.
      */
     static void main(String[] args) {

@@ -2,6 +2,7 @@ package com.sampong.tambo.tui;
 
 import com.sampong.tambo.tui.components.AddPluginModal;
 import com.sampong.tambo.tui.components.AdvancedPanel;
+import com.sampong.tambo.tui.components.AutoInstallModal;
 import com.sampong.tambo.tui.components.ConfigEditorModal;
 import com.sampong.tambo.tui.components.ConfirmModal;
 import com.sampong.tambo.tui.components.DetailPanel;
@@ -37,6 +38,7 @@ public record TuiComponents(
         ConfirmModal confirmModal,
         TaskArgsModal taskArgsModal,
         AddPluginModal addPluginModal,
+        AutoInstallModal autoInstallModal,
         HelpOverlay helpOverlay,
         SelectBackendModal selectBackendModal,
         SwitchBackendModal switchBackendModal) {

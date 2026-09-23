@@ -13,6 +13,7 @@ import com.sampong.tambo.cli.TamboCommand;
 import com.sampong.tambo.mise.ShellActivationService;
 import com.sampong.tambo.mise.implement.MiseSdkBackend;
 import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
+import com.sampong.tambo.tui.features.AutoInstallPrompt;
 import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
@@ -56,6 +57,17 @@ public final class AppLifecycle {
     private final UiState state;
     @NonNull
     private final Consumer<Runnable> renderThreadRunner;
+    /** How the auto-install flow asks about near-misses; see {@link AutoInstallPrompt}. */
+    @NonNull
+    private final AutoInstallPrompt autoInstallPrompt;
+    /** From {@code --auto-install}: apply the project config once the session is up. */
+    private final boolean autoInstallOnStart;
+    /**
+     * Sets the terminal's window/tab title. A callback rather than the runner itself because
+     * the runner only exists once the TUI has started, after this class is constructed.
+     */
+    @NonNull
+    private final Consumer<String> windowTitle;
 
     /**
      * Not final: rebuilt by {@link #onBackendPicked} if the first-run backend picker resolves
@@ -71,6 +83,7 @@ public final class AppLifecycle {
                         @NonNull CancelRegistry cancelRegistry, @NonNull MiseSdkBackend miseSdkBackend,
                         @NonNull VfoxSdkBackend vfoxSdkBackend, @NonNull AsyncTaskExecutor executor,
                         @NonNull UiState state, @NonNull Consumer<Runnable> renderThreadRunner,
+                        @NonNull AutoInstallPrompt autoInstallPrompt, @NonNull Consumer<String> windowTitle,
                         @NonNull TamboCommand command) {
         this.miseActivation = miseActivation;
         this.vfoxActivation = vfoxActivation;
@@ -80,6 +93,9 @@ public final class AppLifecycle {
         this.executor = executor;
         this.state = state;
         this.renderThreadRunner = renderThreadRunner;
+        this.autoInstallPrompt = autoInstallPrompt;
+        this.autoInstallOnStart = command.autoInstall();
+        this.windowTitle = windowTitle;
 
         Boolean decided = resolveBackendChoice(command);
         this.pendingBackendChoice = decided == null;
@@ -171,8 +187,27 @@ public final class AppLifecycle {
      * {@link #onBackendPicked} just resolved a first-run choice.
      */
     public void beginSession() {
+        windowTitle.accept(windowTitleText());
         state.addLog(LogLevel.INFO, "tambo — a lazygit-style TUI for " + state.backend().name()
-                + ". Press ? for help, a to add an SDK.");
+                + ". Press ? for help, a to add an SDK, I to apply "
+                + state.backend().projectConfigFileName() + ".");
         actions.loadInitial();
+        if (autoInstallOnStart) {
+            // --auto-install only moves the I key to startup; everything it does, including
+            // asking about a version that is close but not equal, is the same flow.
+            actions.autoInstall(autoInstallPrompt);
+        }
+    }
+
+    /**
+     * {@code "tambo — vfox — my-project"}: the app, the backend this session drives, and the
+     * project directory, so a row of terminal tabs says which tambo is which. Set here rather
+     * than at startup because a first run only knows its backend once the picker is answered.
+     */
+    private String windowTitleText() {
+        Path project = Path.of("").toAbsolutePath().getFileName();
+        return "tambo — " + state.backend().name()
+                + (project != null ? " — " + project : "")
+                + (state.offline() ? " (offline)" : "");
     }
 }

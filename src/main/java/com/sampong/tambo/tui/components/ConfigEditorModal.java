@@ -102,6 +102,9 @@ public final class ConfigEditorModal {
                         // TamboUI 0.5.0's TextArea highlighting hook. Every file this editor
                         // opens is TOML, and 0.5.0 bundles no TOML grammar, so the app supplies
                         // its own — see TomlSyntax.
+                        // Deliberately no .wrapWord()/.wrapCharacter(): in 0.5.0 only
+                        // TextArea's clip renderer applies the highlighter; the wrapped
+                        // renderer draws plain text, so wrapping silently kills the colours.
                         .highlighter(TomlSyntax.highlighter(), TomlSyntax.LANGUAGE)
                         .id(PanelIds.CONFIG_EDITOR)
                         .focusable(true)

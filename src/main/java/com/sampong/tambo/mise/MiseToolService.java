@@ -14,6 +14,13 @@ public interface MiseToolService {
     /** Streaming ops take a {@code cancelKey} they register under so the UI can abort them. */
     CliResult install(String toolAtVersion, Consumer<String> onLine, String cancelKey);
 
+    /**
+     * Runs bare {@code mise install}: installs every tool the active config files declare that
+     * is not on disk yet, and nothing else. Unlike {@link #use} it never rewrites
+     * {@code mise.toml} — the versions it installs are the ones already written there.
+     */
+    CliResult installAll(Consumer<String> onLine, String cancelKey);
+
     CliResult uninstall(String toolAtVersion);
 
     /**
@@ -42,6 +49,13 @@ public interface MiseToolService {
      * it in the project's {@code ./mise.toml} (or the global config with {@code -g}).
      */
     CliResult use(String toolAtVersion, boolean global, Consumer<String> onLine, String cancelKey);
+
+    /**
+     * The same {@code mise use [-g] tool@version} as {@link #use}, for a version already on
+     * disk: nothing is downloaded, so it runs unstreamed and on a short timeout rather than
+     * reserving the ten-minute install budget for what is a config rewrite.
+     */
+    CliResult pin(String toolAtVersion, boolean global);
 
     /**
      * Runs {@code mise run <task>}, appending {@code -- <args>} when {@code args}

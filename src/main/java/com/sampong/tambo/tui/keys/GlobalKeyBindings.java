@@ -12,6 +12,7 @@ import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.toolkit.event.EventRouter;
 import dev.tamboui.tui.bindings.BindingSets;
 import dev.tamboui.tui.bindings.Bindings;
+import dev.tamboui.tui.event.Event;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.tui.event.MouseEvent;
@@ -70,188 +71,228 @@ public final class GlobalKeyBindings {
 
     /** Registers the single global key handler every keypress not claimed by a focused input goes through. */
     public void register(@NonNull EventRouter router) {
-        router.addGlobalHandler(event -> {
-            if (ui.helpOverlay().isOpen() && event instanceof MouseEvent mouse) {
-                // The overlay covers the panels, so the wheel scrolls the reference itself
-                // rather than whatever is underneath it, and a stray click cannot refocus a
-                // panel the user cannot even see.
-                ui.helpOverlay().handleMouse(mouse);
-                return EventResult.HANDLED;
-            }
-            if (!(event instanceof KeyEvent key)) {
-                return EventResult.UNHANDLED;
-            }
-            if (ui.selectBackendModal().isOpen()) {
-                // No focusable input of its own, and nothing else should be reachable
-                // until the first-run choice is made — swallow every key here.
-                ui.selectBackendModal().handleKey(key);
-                return EventResult.HANDLED;
-            }
-            if (ui.helpOverlay().isOpen()) {
-                // No focusable element of its own — the overlay reads its own scroll
-                // and close keys here, the way ConfirmModal reads its y/n.
-                ui.helpOverlay().handleKey(key);
-                return EventResult.HANDLED;
-            }
-            if (ui.confirmModal().isOpen()) {
-                // No focusable input of its own — the confirm dialog reads its keys here.
-                ui.confirmModal().handleKey(key);
-                return EventResult.HANDLED;
-            }
-            if (ui.switchBackendModal().isOpen()) {
-                // No focusable input of its own — the backend picker reads its keys here.
-                ui.switchBackendModal().handleKey(key);
-                return EventResult.HANDLED;
-            }
-            if (ui.registryModal().isOpen() || ui.configEditor().isOpen() || ui.taskArgsModal().isOpen()
-                    || ui.addPluginModal().isOpen()) {
-                // The modal's input box / text area is focused and consumes everything
-                // it needs; never let panel shortcuts fire underneath it.
-                return EventResult.UNHANDLED;
-            }
-            if (key.isChar('?')) {
-                ui.helpOverlay().open();
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('V')) {
-                boolean enabling = !ctx.state().advancedFeatures();
-                ctx.state().advancedFeatures(enabling);
-                if (enabling) {
-                    // Focus the panel this key just added to the stack — it appears at the
-                    // bottom, and leaving focus where it was would hide what the key did.
-                    ui.sidePanels().focus(SidePanels.Side.ADVANCED);
-                } else if (PanelIds.ADVANCED.equals(ctx.focusedId())) {
-                    // The panel just left the stack; focus has to go somewhere that still
-                    // renders, or the next keypress would reach nothing.
-                    ui.sidePanels().focus(SidePanels.Side.TOOLS);
-                }
-                ctx.state().addLog(LogLevel.INFO, enabling
-                        ? "Advanced features enabled — see the Advanced panel"
-                        : "Advanced features hidden");
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('a')) {
-                if (ctx.state().offline()) {
-                    ctx.state().addLog(LogLevel.INFO, "Offline mode — Add SDK needs network access");
-                } else {
-                    ui.registryModal().open();
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('A')) {
-                ctx.actions().activateShell();
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('T') && ctx.supports(BackendFeature.TRUST)) {
-                if (requireAdvanced("Trust")) {
-                    ctx.actions().trustProject();
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('e')) {
-                String file = ctx.backend().projectConfigFileName();
-                ui.configEditor().open(Path.of(file), "./" + file);
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('E') && ctx.supports(BackendFeature.GLOBAL_CONFIG)) {
-                if (requireAdvanced("Editing the global config")) {
-                    ui.configEditor().open(requireGlobalConfigPath(), "global config.toml");
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('D') && ctx.supports(BackendFeature.DOCTOR)) {
-                if (requireAdvanced(ctx.backend().name() + " doctor")) {
-                    ctx.actions().runDoctor();
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('U')) {
-                if (requireAdvanced(ctx.backend().name() + " self-update")) {
-                    ctx.actions().selfUpdate();
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('B')) {
-                if (requireAdvanced("Switch UI backend")) {
-                    ui.switchBackendModal().open(this::applyBackendChoice);
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('p') && ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
-                // vfox-only: 'p' is free (mise's ToolsPanel binds it to per-tool upgrade
-                // instead) — used here for the everyday "add plugin" flow, fuzzy-finding
-                // the catalog. The [advanced] --alias/--source raw syntax stays behind 'P'.
-                if (ctx.state().offline()) {
-                    ctx.state().addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
-                } else {
-                    ui.addPluginModal().open();
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('P')) {
-                if (ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
-                    if (requireAdvanced("Add plugin with --alias/--source")) {
-                        if (ctx.state().offline()) {
-                            ctx.state().addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
-                        } else {
-                            ui.addPluginModal().open();
-                        }
-                    }
-                } else if (ctx.state().offline()) {
-                    ctx.state().addLog(LogLevel.INFO, "Offline mode — can't check for outdated tools");
-                } else if (ctx.state().outdated().isEmpty()) {
-                    ctx.state().addLog(LogLevel.INFO, "All tools are up to date");
-                } else {
-                    ctx.confirm("Upgrade all " + ctx.state().outdated().size() + " outdated tool(s)?",
-                            ctx.actions()::upgradeAll);
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('C')) {
-                // Panel-local 'c' only cancels what the cursor is on; this always
-                // stops everything, however the user has moved around since.
-                ctx.actions().cancelAll();
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('X') && ctx.supports(BackendFeature.PRUNE)) {
-                if (requireAdvanced("Prune")) {
-                    ctx.confirm("Prune unused/old tool versions?", ctx.actions()::prune);
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('5')) {
-                // The command log is not in the stack — it sits under the main pane — so it is
-                // the one number key that does not go through SidePanels.
-                ctx.focus(PanelIds.LOG);
-                return EventResult.HANDLED;
-            }
-            SidePanels.Side jump = sideFor(key);
-            if (jump != null) {
-                if (jump == SidePanels.Side.ADVANCED && !requireAdvanced("The Advanced panel")) {
-                    return EventResult.HANDLED;
-                }
-                if (ui.sidePanels().available(jump)) {
-                    ui.sidePanels().focus(jump);
-                } else {
-                    // The panel is in the stack but this backend cannot serve it, so there is
-                    // nothing to focus. Say why instead of letting the key look broken.
-                    ctx.state().addLog(LogLevel.INFO, ui.sidePanels().unsupportedReason(jump));
-                }
-                return EventResult.HANDLED;
-            }
-            if (key.code() == KeyCode.TAB) {
-                // lazygit's panel walk: Tab moves to the next panel in the stack, shift+Tab
-                // back. Every panel is on screen already, so this moves focus rather than
-                // swapping what is rendered.
-                ui.sidePanels().cycle(key.hasShift() ? -1 : 1);
-                return EventResult.HANDLED;
-            }
-            if (key.isChar('r') && !key.hasCtrl()) {
-                ctx.actions().refresh();
-                return EventResult.HANDLED;
-            }
+        router.addGlobalHandler(this::handle);
+    }
+
+    /** Open modals get first claim on every event; only with none open do the global shortcuts apply. */
+    private EventResult handle(Event event) {
+        if (ui.helpOverlay().isOpen() && event instanceof MouseEvent mouse) {
+            // The overlay covers the panels, so the wheel scrolls the reference itself
+            // rather than whatever is underneath it, and a stray click cannot refocus a
+            // panel the user cannot even see.
+            ui.helpOverlay().handleMouse(mouse);
+            return EventResult.HANDLED;
+        }
+        if (!(event instanceof KeyEvent key)) {
             return EventResult.UNHANDLED;
-        });
+        }
+        EventResult modal = routeToOpenModal(key);
+        if (modal != null) {
+            return modal;
+        }
+        return handleShortcut(key) ? EventResult.HANDLED : EventResult.UNHANDLED;
+    }
+
+    /**
+     * Gives the key to whichever modal is open, or returns null when none is. The modals with
+     * no focusable input of their own read their keys here, the way {@code ConfirmModal} reads
+     * its y/n; the ones with an input box or text area have it focused already, so the key is
+     * left to that and must not fall through to a panel shortcut underneath.
+     */
+    private @Nullable EventResult routeToOpenModal(KeyEvent key) {
+        if (ui.selectBackendModal().isOpen()) {
+            // Nothing else should be reachable until the first-run choice is made.
+            ui.selectBackendModal().handleKey(key);
+            return EventResult.HANDLED;
+        }
+        if (ui.helpOverlay().isOpen()) {
+            ui.helpOverlay().handleKey(key);
+            return EventResult.HANDLED;
+        }
+        if (ui.confirmModal().isOpen()) {
+            ui.confirmModal().handleKey(key);
+            return EventResult.HANDLED;
+        }
+        if (ui.switchBackendModal().isOpen()) {
+            ui.switchBackendModal().handleKey(key);
+            return EventResult.HANDLED;
+        }
+        if (ui.autoInstallModal().isOpen()) {
+            ui.autoInstallModal().handleKey(key);
+            return EventResult.HANDLED;
+        }
+        if (ui.registryModal().isOpen() || ui.configEditor().isOpen() || ui.taskArgsModal().isOpen()
+                || ui.addPluginModal().isOpen()) {
+            return EventResult.UNHANDLED;
+        }
+        return null;
+    }
+
+    /**
+     * The global letter shortcuts. Returns false for a key that is not one — including a letter
+     * whose feature this backend does not have, so it reaches nothing rather than half-running.
+     */
+    private boolean handleShortcut(KeyEvent key) {
+        String name = ctx.backend().name();
+        switch (key.string()) {
+            case "?" -> ui.helpOverlay().open();
+            case "V" -> toggleAdvancedFeatures();
+            case "a" -> whenOnline("Add SDK", ui.registryModal()::open);
+            case "A" -> ctx.actions().activateShell();
+            // Not gated behind V: bringing a freshly cloned project in line with its own
+            // config is the first thing a user does here, not a maintenance chore. The
+            // lower-case 'i' is the Tools panel's per-row install, so this takes the shift.
+            case "I" -> ctx.actions().autoInstall(ctx::promptAutoInstall);
+            case "e" -> editProjectConfig();
+            case "U" -> advanced(name + " self-update", ctx.actions()::selfUpdate);
+            case "B" -> advanced("Switch UI backend", () -> ui.switchBackendModal().open(this::applyBackendChoice));
+            case "P" -> addPluginOrUpgradeAll();
+            // Panel-local 'c' only cancels what the cursor is on; this always stops
+            // everything, however the user has moved around since.
+            case "C" -> ctx.actions().cancelAll();
+            // The command log is not in the stack — it sits under the main pane — so it is
+            // the one number key that does not go through SidePanels.
+            case "5" -> ctx.focus(PanelIds.LOG);
+            case "T" -> {
+                return advanced(BackendFeature.TRUST, "Trust", ctx.actions()::trustProject);
+            }
+            case "E" -> {
+                return advanced(BackendFeature.GLOBAL_CONFIG, "Editing the global config", this::editGlobalConfig);
+            }
+            case "D" -> {
+                return advanced(BackendFeature.DOCTOR, name + " doctor", ctx.actions()::runDoctor);
+            }
+            case "X" -> {
+                return advanced(BackendFeature.PRUNE, "Prune",
+                        () -> ctx.confirm("Prune unused/old tool versions?", ctx.actions()::prune));
+            }
+            // vfox-only: 'p' is free (mise's ToolsPanel binds it to per-tool upgrade instead)
+            // — used here for the everyday "add plugin" flow, fuzzy-finding the catalog. The
+            // [advanced] --alias/--source raw syntax stays behind 'P'.
+            case "p" -> {
+                if (!ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
+                    return false;
+                }
+                openAddPlugin();
+            }
+            case "r" -> {
+                if (key.hasCtrl()) {
+                    return false;
+                }
+                ctx.actions().refresh();
+            }
+            default -> {
+                return handlePanelNavigation(key);
+            }
+        }
+        return true;
+    }
+
+    /** Number keys jump to a panel in the stack; Tab / Shift+Tab walk it. */
+    private boolean handlePanelNavigation(KeyEvent key) {
+        SidePanels.Side jump = sideFor(key);
+        if (jump != null) {
+            focusSide(jump);
+            return true;
+        }
+        if (key.code() == KeyCode.TAB) {
+            // lazygit's panel walk: Tab moves to the next panel in the stack, shift+Tab
+            // back. Every panel is on screen already, so this moves focus rather than
+            // swapping what is rendered.
+            ui.sidePanels().cycle(key.hasShift() ? -1 : 1);
+            return true;
+        }
+        return false;
+    }
+
+    private void focusSide(SidePanels.Side side) {
+        if (side == SidePanels.Side.ADVANCED && !requireAdvanced("The Advanced panel")) {
+            return;
+        }
+        if (ui.sidePanels().available(side)) {
+            ui.sidePanels().focus(side);
+        } else {
+            // The panel is in the stack but this backend cannot serve it, so there is
+            // nothing to focus. Say why instead of letting the key look broken.
+            ctx.state().addLog(LogLevel.INFO, ui.sidePanels().unsupportedReason(side));
+        }
+    }
+
+    private void toggleAdvancedFeatures() {
+        boolean enabling = !ctx.state().advancedFeatures();
+        ctx.state().advancedFeatures(enabling);
+        if (enabling) {
+            // Focus the panel this key just added to the stack — it appears at the
+            // bottom, and leaving focus where it was would hide what the key did.
+            ui.sidePanels().focus(SidePanels.Side.ADVANCED);
+        } else if (PanelIds.ADVANCED.equals(ctx.focusedId())) {
+            // The panel just left the stack; focus has to go somewhere that still
+            // renders, or the next keypress would reach nothing.
+            ui.sidePanels().focus(SidePanels.Side.TOOLS);
+        }
+        ctx.state().addLog(LogLevel.INFO, enabling
+                ? "Advanced features enabled — see the Advanced panel"
+                : "Advanced features hidden");
+    }
+
+    /**
+     * {@code P}: where the backend has a plugin registry, the [advanced] raw
+     * {@code --alias/--source} add; everywhere else, upgrade every outdated tool.
+     */
+    private void addPluginOrUpgradeAll() {
+        if (ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
+            if (requireAdvanced("Add plugin with --alias/--source")) {
+                openAddPlugin();
+            }
+        } else if (ctx.state().offline()) {
+            ctx.state().addLog(LogLevel.INFO, "Offline mode — can't check for outdated tools");
+        } else if (ctx.state().outdated().isEmpty()) {
+            ctx.state().addLog(LogLevel.INFO, "All tools are up to date");
+        } else {
+            ctx.confirm("Upgrade all " + ctx.state().outdated().size() + " outdated tool(s)?",
+                    ctx.actions()::upgradeAll);
+        }
+    }
+
+    private void editProjectConfig() {
+        String file = ctx.backend().projectConfigFileName();
+        ui.configEditor().open(Path.of(file), "./" + file);
+    }
+
+    private void editGlobalConfig() {
+        ui.configEditor().open(requireGlobalConfigPath(), "global config.toml");
+    }
+
+    private void openAddPlugin() {
+        whenOnline("Add plugin", ui.addPluginModal()::open);
+    }
+
+    /** Runs {@code action} unless offline, when it logs that {@code what} needs the network instead. */
+    private void whenOnline(String what, Runnable action) {
+        if (ctx.state().offline()) {
+            ctx.state().addLog(LogLevel.INFO, "Offline mode — " + what + " needs network access");
+        } else {
+            action.run();
+        }
+    }
+
+    /** Runs {@code action} if advanced features are on; otherwise nudges toward {@code V}. */
+    private void advanced(String label, Runnable action) {
+        if (requireAdvanced(label)) {
+            action.run();
+        }
+    }
+
+    /**
+     * {@link #advanced(String, Runnable)} for a key that only exists when the backend has
+     * {@code feature}; returns false, leaving the key unhandled, when it does not.
+     */
+    private boolean advanced(BackendFeature feature, String label, Runnable action) {
+        if (!ctx.supports(feature)) {
+            return false;
+        }
+        advanced(label, action);
+        return true;
     }
 
     /**
@@ -320,13 +361,7 @@ public final class GlobalKeyBindings {
         if (ctx.supports(BackendFeature.PLUGIN_REGISTRY)) {
             menu.add(new AdvancedPanel.Action("P", "Add plugin (--alias/--source)",
                     "Registers a plugin from a specific alias or source URL instead of the catalog.",
-                    () -> {
-                        if (ctx.state().offline()) {
-                            ctx.state().addLog(LogLevel.INFO, "Offline mode — Add plugin needs network access");
-                        } else {
-                            ui.addPluginModal().open();
-                        }
-                    }));
+                    this::openAddPlugin));
         }
         if (ctx.supports(BackendFeature.TRUST)) {
             menu.add(new AdvancedPanel.Action("T", "Trust project config",
@@ -337,7 +372,7 @@ public final class GlobalKeyBindings {
         if (ctx.supports(BackendFeature.GLOBAL_CONFIG)) {
             menu.add(new AdvancedPanel.Action("E", "Edit global config",
                     "Opens the user-level " + name + " config.toml in the built-in editor.",
-                    () -> ui.configEditor().open(requireGlobalConfigPath(), "global config.toml")));
+                    this::editGlobalConfig));
         }
         if (ctx.supports(BackendFeature.DOCTOR)) {
             menu.add(new AdvancedPanel.Action("D", name + " doctor",
