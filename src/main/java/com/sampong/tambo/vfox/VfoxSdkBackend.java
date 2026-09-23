@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 
 import org.jspecify.annotations.NullMarked;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Service;
 
@@ -25,7 +26,6 @@ import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 
 /**
  * Implements {@link SdkVersionBackend} against the {@code vfox} CLI. vfox has no JSON output for
@@ -42,7 +42,6 @@ import lombok.RequiredArgsConstructor;
  * unsupported defaults, which is what the UI renders as an explanation rather than an empty panel.
  */
 @Service
-@RequiredArgsConstructor
 public class VfoxSdkBackend implements SdkVersionBackend {
 
     /** vfox's actual project-scope config filename — dot-prefixed, per vfox's own convention. */
@@ -79,6 +78,11 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     /** Used to overlap the two subprocess calls {@link #listSdks()} needs. */
     @NonNull
     private final AsyncTaskExecutor executor;
+
+    public VfoxSdkBackend(@NonNull VfoxCli cli, @NonNull @Qualifier("miseTaskExecutor") AsyncTaskExecutor executor) {
+        this.cli = cli;
+        this.executor = executor;
+    }
 
     // ==================== Identity ====================
 
@@ -121,6 +125,8 @@ public class VfoxSdkBackend implements SdkVersionBackend {
             case UPGRADE -> "vfox does not report which SDKs are outdated. Install a newer "
                     + "version with a, then switch to it with u.";
             case CONFIG_VALIDATE -> "vfox does not expose a config parse check.";
+            case BULK_INSTALL -> "vfox has no command that installs a whole .vfox.toml at once, "
+                    + "so auto-install applies its tools one at a time instead.";
             case GLOBAL_CONFIG -> "vfox keeps its global state in its own data directory rather "
                     + "than an editable config file. Use g to set a global default instead.";
             default -> "vfox does not support this.";
@@ -183,23 +189,29 @@ public class VfoxSdkBackend implements SdkVersionBackend {
             if (line.isEmpty() || line.equalsIgnoreCase("All installed sdk versions")) {
                 continue;
             }
-            boolean markedActive = line.toLowerCase().contains("current");
             String token = line.replaceAll("(?i)<[—-]+\\s*current.*$", "").strip();
-            if (VERSION_LIKE.matcher(token).matches()) {
-                if (currentSdk != null) {
-                    String version = token.startsWith("v") ? token.substring(1) : token;
-                    boolean active = version.equals(current.get(currentSdk)) || markedActive;
-                    sdks.add(new SdkVersion(currentSdk, version, null, null, null, null, true, active));
-                    sawVersion = true;
-                }
-            } else {
+            if (!VERSION_LIKE.matcher(token).matches()) {
+                // Not a version, so the next SDK's node — close off the previous one first.
                 addIfVersionless(sdks, currentSdk, sawVersion);
                 currentSdk = token.toLowerCase();
                 sawVersion = false;
+            } else if (currentSdk != null) {
+                sdks.add(versionRow(currentSdk, token, line, current));
+                sawVersion = true;
             }
         }
         addIfVersionless(sdks, currentSdk, sawVersion);
         return sdks;
+    }
+
+    /**
+     * One installed version under {@code sdk}. It is active when {@code vfox current} names it,
+     * or when the tree line itself carries the {@code <— current} marker.
+     */
+    private static SdkVersion versionRow(String sdk, String token, String line, Map<String, String> current) {
+        String version = token.startsWith("v") ? token.substring(1) : token;
+        boolean active = version.equals(current.get(sdk)) || line.toLowerCase().contains("current");
+        return new SdkVersion(sdk, version, null, null, null, null, true, active);
     }
 
     /**
@@ -252,7 +264,7 @@ public class VfoxSdkBackend implements SdkVersionBackend {
                 continue; // header ("Available versions:") or anything unexpected
             }
             // Each row is "- <version> [<trailing annotations>]", e.g.
-            // "24.15.0 (LTS) [npm 11.12.1] (installed)" for nodejs — everything from the
+            // "24.15.0 (LTS) [npm 11.12.1] (installed)" for Node.js — everything from the
             // first space on is decoration, not part of the version token the CLI expects,
             // except that the decoration is also where vfox states what is already on disk.
             String rest = line.substring(1).strip();
@@ -280,22 +292,27 @@ public class VfoxSdkBackend implements SdkVersionBackend {
         }
         List<CatalogEntry> entries = new ArrayList<>();
         for (String rawLine : result.stdout().split("\n")) {
-            String line = clean(rawLine);
-            if (line.isEmpty() || line.equalsIgnoreCase("AVAILABLE PLUGINS")
-                    || line.toLowerCase().startsWith("use ")) {
-                continue; // header or the "Use 'vfox add <plugin>' to install" footer
+            CatalogEntry entry = catalogEntry(clean(rawLine));
+            if (entry != null) {
+                entries.add(entry);
             }
-            String[] parts = line.split("\\s+", 3);
-            if (parts.length < 2) {
-                continue;
-            }
-            String name = parts[0];
-            boolean official = parts[1].contains("✓");
-            String homepage = parts.length > 2 ? parts[2].strip() : "";
-            String description = (official ? "official" : "community") + (homepage.isEmpty() ? "" : " — " + homepage);
-            entries.add(CatalogEntry.of(name, description));
         }
         return entries;
+    }
+
+    /** One {@code <name> <✓/✗> <homepage>} row, or null for the header, the footer, or a blank line. */
+    private static @Nullable CatalogEntry catalogEntry(String line) {
+        if (line.isEmpty() || line.equalsIgnoreCase("AVAILABLE PLUGINS")
+                || line.toLowerCase().startsWith("use ")) {
+            return null; // header or the "Use 'vfox add <plugin>' to install" footer
+        }
+        String[] parts = line.split("\\s+", 3);
+        if (parts.length < 2) {
+            return null;
+        }
+        String origin = parts[1].contains("✓") ? "official" : "community";
+        String homepage = parts.length > 2 ? parts[2].strip() : "";
+        return CatalogEntry.of(parts[0], homepage.isEmpty() ? origin : origin + " — " + homepage);
     }
 
     // ==================== SDK operations ====================
@@ -354,6 +371,18 @@ public class VfoxSdkBackend implements SdkVersionBackend {
         }
         List<String> args = List.of("use", global ? "-g" : "-p", sdkAtVersion);
         return cli.runStreaming(args, USE_TIMEOUT, onLine, cancelKey);
+    }
+
+    /**
+     * Bare {@code vfox use -p|-g <sdk>@<version>} — the scope switch on its own, without the
+     * {@code add}/{@code install} pair {@link #use} runs first. That is exactly what vfox's
+     * {@code use} is natively (it errors on a version that is not installed yet), so this is
+     * the one place the adapter does not have to make up for vfox lacking mise's install-and-pin.
+     */
+    @Override
+    @NullMarked
+    public CliResult pin(String sdkAtVersion, boolean global) {
+        return cli.run(List.of("use", global ? "-g" : "-p", sdkAtVersion), USE_TIMEOUT);
     }
 
     /**

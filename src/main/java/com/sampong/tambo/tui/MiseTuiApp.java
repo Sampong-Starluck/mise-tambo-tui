@@ -1,5 +1,9 @@
 package com.sampong.tambo.tui;
 
+import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
@@ -10,16 +14,15 @@ import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.TuiConfig;
 
 import com.sampong.tambo._common.base.CancelRegistry;
+import com.sampong.tambo._common.model.AutoInstallStep;
 import com.sampong.tambo.cli.TamboCommand;
-import com.sampong.tambo.mise.MiseMaintenanceService;
-import com.sampong.tambo.mise.MiseQueryService;
-import com.sampong.tambo.mise.MiseToolService;
 import com.sampong.tambo.mise.implement.MiseSdkBackend;
 import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.vfox.VfoxShellActivationServiceImp;
 import com.sampong.tambo.tui.components.AddPluginModal;
 import com.sampong.tambo.tui.components.AdvancedPanel;
+import com.sampong.tambo.tui.components.AutoInstallModal;
 import com.sampong.tambo.tui.components.ConfigEditorModal;
 import com.sampong.tambo.tui.components.ConfirmModal;
 import com.sampong.tambo.tui.components.DetailPanel;
@@ -68,7 +71,17 @@ import lombok.NonNull;
  * {@link #ui} bundles every panel/modal instance so {@code layout} and {@code keys} can reach
  * them without this class exposing a getter per component.
  */
+/*
+ * "resource": ToolkitRunner is AutoCloseable, so every runner() call below trips the IDE's
+ * "used without try-with-resources" inspection. The resource is not this class's to close —
+ * ToolkitApp.run() creates it inside its own try-with-resources, publishes it for the length of
+ * the session, and closes it on the way out; runner() only hands that borrowed reference back.
+ * Closing it here would tear the terminal down mid-session. Suppressed at class scope rather
+ * than on each of the seven call sites because this class opens no resources of its own: it
+ * reads that one and owns nothing else closeable.
+ */
 @Component
+@SuppressWarnings("resource")
 public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
     private final UiState state;
@@ -93,7 +106,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
 
         this.lifecycle = new AppLifecycle(miseActivation, vfoxActivation,
                 cancelRegistry, miseSdkBackend, vfoxSdkBackend, executor, state,
-                r -> runner().runOnRenderThread(r), command);
+                r -> runner().runOnRenderThread(r), this::promptAutoInstall, this::applyWindowTitle, command);
 
         StatusPanel statusPanel = new StatusPanel(this);
         ToolsPanel toolsPanel = new ToolsPanel(this);
@@ -117,6 +130,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
                 new ConfirmModal(this),
                 new TaskArgsModal(this),
                 new AddPluginModal(this),
+                new AutoInstallModal(this),
                 new HelpOverlay(this, this::terminalHeight, this::terminalWidth),
                 new SelectBackendModal(),
                 new SwitchBackendModal(this));
@@ -166,7 +180,7 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     public boolean modalOpen() {
         return !ui.registryModal().isOpen() && !ui.configEditor().isOpen() && !ui.confirmModal().isOpen()
                 && !ui.taskArgsModal().isOpen() && !ui.addPluginModal().isOpen() && !ui.selectBackendModal().isOpen()
-                && !ui.switchBackendModal().isOpen();
+                && !ui.switchBackendModal().isOpen() && !ui.autoInstallModal().isOpen();
     }
 
     @Override
@@ -182,6 +196,12 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     public void promptVersionFor(String tool) {
         ui.registryModal().openAtVersion(tool);
+    }
+
+    @Override
+    public void promptAutoInstall(List<AutoInstallStep> undecided,
+                                  Consumer<Map<String, String>> onDecided, Runnable onCancel) {
+        ui.autoInstallModal().open(undecided, onDecided, onCancel);
     }
 
     // ==================== ToolkitApp hooks ====================
@@ -212,6 +232,19 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     protected Element render() {
         return layout.render();
+    }
+
+    /**
+     * TamboUI 0.5.0's window-title hook. The runner saves the terminal's own title the first
+     * time this is called and puts it back on exit, so nothing here has to restore it. A
+     * terminal that rejects the escape sequence is not a reason to fail the session.
+     */
+    private void applyWindowTitle(String title) {
+        try {
+            runner().setWindowTitle(title);
+        } catch (RuntimeException e) {
+            // Best-effort: the title is cosmetic.
+        }
     }
 
     /** Counterpart to {@link #terminalHeight()}: only the help overlay sizes itself by width too. */

@@ -106,11 +106,6 @@ public final class UiState {
     @Getter(AccessLevel.NONE)
     private final Deque<LogEntry> log = new ArrayDeque<>();
 
-    /** Horizontal pan of the command-log viewport, in columns; 0 = no pan. Custom clamped setter below. */
-    @Getter(AccessLevel.NONE)
-    @Setter(AccessLevel.NONE)
-    private int logHScroll;
-
     // ==================== Backend ====================
 
     /**
@@ -239,23 +234,10 @@ public final class UiState {
         return log;
     }
 
-    public int logSize() {
-        return log.size();
-    }
-
     public void addLog(LogLevel level, String text) {
         log.addLast(new LogEntry(level, text));
         while (log.size() > MAX_LOG) {
             log.removeFirst();
         }
-    }
-
-    public int logHScroll() {
-        return logHScroll;
-    }
-
-    /** Pans the log viewport horizontally; never negative, capped by LogPanel per frame. */
-    public void logHScroll(int columns) {
-        this.logHScroll = Math.max(0, columns);
     }
 }

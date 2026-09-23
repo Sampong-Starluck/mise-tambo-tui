@@ -31,7 +31,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-public class TamboConfig {
+public final class TamboConfig {
 
     /** tambo.properties key for {@link #backend()}. */
     private static final String BACKEND_KEY = "ui.backend";

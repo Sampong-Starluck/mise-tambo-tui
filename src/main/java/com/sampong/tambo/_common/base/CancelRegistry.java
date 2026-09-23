@@ -30,11 +30,6 @@ public class CancelRegistry {
         running.remove(key);
     }
 
-    /** True when an operation under {@code key} is currently cancellable. */
-    public boolean isRunning(@NonNull String key) {
-        return running.containsKey(key);
-    }
-
     /**
      * Keys of every operation currently cancellable, in no particular order.
      * Lets the UI cancel what is actually running rather than only what the

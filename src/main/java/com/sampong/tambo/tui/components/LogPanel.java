@@ -6,14 +6,19 @@ import static dev.tamboui.toolkit.Toolkit.text;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.elements.ListElement;
-import dev.tamboui.toolkit.elements.Row;
+import dev.tamboui.toolkit.element.Element;
+import dev.tamboui.toolkit.element.StyledElement;
+import dev.tamboui.toolkit.elements.TextElement;
 import dev.tamboui.toolkit.event.EventResult;
 import dev.tamboui.tui.event.KeyCode;
+import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.tui.event.MouseEvent;
 import dev.tamboui.tui.event.MouseEventKind;
 import dev.tamboui.widgets.common.ScrollBarPolicy;
 
@@ -30,17 +35,19 @@ import lombok.RequiredArgsConstructor;
  * The command log — every backend invocation this app makes, echoed
  * the way lazygit echoes its {@code git} calls. Sticky-scrolls to the newest entry.
  * <p>
- * Focus it (click, or {@code 5}) and scroll: ↑/↓, PgUp/PgDn, Home vertically —
- * End resumes following the newest entry — and ←/→ or h/l pan long lines
- * horizontally. The mouse wheel works over the panel even when it is not
- * focused: vertically as always, and horizontally too on terminals that report
- * it, which TamboUI delivers as of 0.5.0.
+ * Focus it (click, or {@code 5}) and scroll: ↑/↓, PgUp/PgDn, Home — End resumes
+ * following the newest entry. The mouse wheel works over the panel even when it
+ * is not focused.
+ * <p>
+ * Long lines — streamed build output above all — are word-wrapped to the panel's
+ * width rather than clipped, so there is nothing to pan sideways. Each wrapped
+ * line is its own list row, which is what the scroll position counts.
  */
 @RequiredArgsConstructor
 public final class LogPanel {
 
-    /** Columns panned per ←/→ keypress. */
-    private static final int H_STEP = 8;
+    /** Columns of chrome to subtract before wrapping: the border, the scrollbar, and a margin. */
+    private static final int CHROME_WIDTH = 4;
     /** Rows scrolled per mouse wheel tick. */
     private static final int WHEEL_STEP = 3;
 
@@ -48,7 +55,7 @@ public final class LogPanel {
     private final UiContext ctx;
 
     /**
-     * The row that anchors the viewport, and whether it should keep tracking the
+     * The display row that anchors the viewport, and whether it should keep tracking the
      * newest entry. Tracked here rather than via {@code ListElement.stickyScroll()}
      * because a fresh {@link ListElement} — and a fresh internal {@code ListState} —
      * is built every render, so anything the widget scrolls internally is discarded
@@ -57,93 +64,76 @@ public final class LogPanel {
     private int index;
     private boolean followTail = true;
 
-    public ListElement<?> build() {
-        int offset = clampToLongestLine(ctx.state().logHScroll());
+    /** {@code width} is the panel's rendered column count, which the log lines are wrapped to. */
+    public ListElement<?> build(int width) {
         boolean focused = PanelIds.LOG.equals(ctx.focusedId());
-        List<LogEntry> entries = new ArrayList<>();
-        ctx.state().log().forEach(entries::add);
-        index = followTail ? entries.size() - 1 : Ui.clamp(index, entries.size());
+        int wrap = Math.max(20, width - CHROME_WIDTH);
+        List<Element> rows = new ArrayList<>();
+        for (LogEntry e : ctx.state().log()) {
+            rows.addAll(logRows(e, wrap));
+        }
+        index = followTail ? rows.size() - 1 : Ui.clamp(index, rows.size());
 
         ListElement<?> list = list()
-                .title(" [5] Command Log" + (offset > 0 ? " →" + offset : "") + " ")
+                .title(" [5] Command Log ")
                 .rounded().id(PanelIds.LOG).focusable(ctx.modalOpen())
                 .borderColor(focused ? ctx.theme().focus() : ctx.theme().idle())
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
                 .displayOnly().autoScroll()
                 .selected(index)
-                .onKeyEvent(event -> {
-                    if (event.code() == KeyCode.LEFT || event.isChar('h')) {
-                        ctx.state().logHScroll(offset - H_STEP);
-                        return EventResult.HANDLED;
-                    }
-                    if (event.code() == KeyCode.RIGHT || event.isChar('l')) {
-                        ctx.state().logHScroll(offset + H_STEP);
-                        return EventResult.HANDLED;
-                    }
-                    if (Ui.isNavKey(event)) {
-                        index = Ui.applyNav(event, index, entries.size());
-                        followTail = event.code() == KeyCode.END || index >= entries.size() - 1;
-                        return EventResult.HANDLED;
-                    }
-                    return EventResult.UNHANDLED;
-                })
-                .onMouseEvent(event -> {
-                    if (event.kind() == MouseEventKind.SCROLL_UP) {
-                        index = Ui.clamp(index - WHEEL_STEP, entries.size());
-                        followTail = false;
-                        return EventResult.HANDLED;
-                    }
-                    if (event.kind() == MouseEventKind.SCROLL_DOWN) {
-                        index = Ui.clamp(index + WHEEL_STEP, entries.size());
-                        followTail = index >= entries.size() - 1;
-                        return EventResult.HANDLED;
-                    }
-                    // Horizontal wheel / trackpad swipe, delivered since TamboUI 0.5.0. Panning
-                    // already existed on ←/→ and h/l; this just gives it the matching gesture,
-                    // and it is the natural one for the long streamed build lines this panel
-                    // shows. Same step as the keys so both feel identical.
-                    if (event.kind() == MouseEventKind.SCROLL_LEFT) {
-                        ctx.state().logHScroll(offset - H_STEP);
-                        return EventResult.HANDLED;
-                    }
-                    if (event.kind() == MouseEventKind.SCROLL_RIGHT) {
-                        ctx.state().logHScroll(offset + H_STEP);
-                        return EventResult.HANDLED;
-                    }
-                    return EventResult.UNHANDLED;
-                });
+                .onKeyEvent(event -> handleKey(event, rows.size()))
+                .onMouseEvent(event -> handleMouse(event, rows.size()));
 
-        if (entries.isEmpty()) {
+        if (rows.isEmpty()) {
             list.add(row(text("No commands run yet.").dim()));
-        } else {
-            for (LogEntry e : entries) {
-                list.add(logRow(e, offset));
-            }
+        }
+        for (Element r : rows) {
+            list.add((StyledElement<?>) r);
         }
         return list;
     }
 
-    /** Keeps the pan offset from running past the longest log line. */
-    private int clampToLongestLine(int offset) {
-        int longest = 0;
-        for (LogEntry e : ctx.state().log()) {
-            longest = Math.max(longest, e.text().length());
+    /** Keyboard scrolling; reaching the last row (or pressing End) resumes following the tail. */
+    private EventResult handleKey(KeyEvent event, int rowCount) {
+        if (!Ui.isNavKey(event)) {
+            return EventResult.UNHANDLED;
         }
-        int clamped = Math.clamp(longest - 1, 0, offset);
-        if (clamped != offset) {
-            ctx.state().logHScroll(clamped);
-        }
-        return clamped;
+        index = Ui.applyNav(event, index, rowCount);
+        followTail = event.code() == KeyCode.END || index >= rowCount - 1;
+        return EventResult.HANDLED;
     }
 
-    private Row logRow(LogEntry e, int offset) {
-        String line = offset < e.text().length() ? e.text().substring(offset) : "";
+    /** Wheel scrolling, which works over the panel whether or not it has focus. */
+    private EventResult handleMouse(MouseEvent event, int rowCount) {
+        if (event.kind() == MouseEventKind.SCROLL_UP) {
+            index = Ui.clamp(index - WHEEL_STEP, rowCount);
+            followTail = false;
+            return EventResult.HANDLED;
+        }
+        if (event.kind() == MouseEventKind.SCROLL_DOWN) {
+            index = Ui.clamp(index + WHEEL_STEP, rowCount);
+            followTail = index >= rowCount - 1;
+            return EventResult.HANDLED;
+        }
+        return EventResult.UNHANDLED;
+    }
+
+    /** One entry, wrapped to {@code wrap} columns — one element per display row. */
+    private List<Element> logRows(LogEntry e, int wrap) {
         return switch (e.level()) {
-            case CMD -> row(text(line).fg(Color.CYAN).bold());
-            case INFO -> infoRow(line);
-            case OK -> row(text(line).fg(Color.GREEN).bold());
-            case ERROR -> row(text(line).fg(Color.RED).bold());
+            case CMD -> plainRows(e.text(), wrap, t -> t.fg(Color.CYAN).bold());
+            case INFO -> infoRows(e.text(), wrap);
+            case OK -> plainRows(e.text(), wrap, t -> t.fg(Color.GREEN).bold());
+            case ERROR -> plainRows(e.text(), wrap, t -> t.fg(Color.RED).bold());
         };
+    }
+
+    private static List<Element> plainRows(String line, int wrap, UnaryOperator<TextElement> style) {
+        List<Element> rows = new ArrayList<>();
+        for (String part : Ui.wordWrap(line, wrap)) {
+            rows.add(row(style.apply(text(part))));
+        }
+        return rows;
     }
 
     /** Prefix {@code liveLogLine} tags every streamed subprocess line with, e.g. {@code "[compile] "}. */
@@ -157,7 +147,7 @@ public final class LogPanel {
      * success so the log still highlights what matters, the way running them
      * directly in a terminal would.
      */
-    private Row infoRow(String line) {
+    private List<Element> infoRows(String line, int wrap) {
         Matcher m = SOURCE_TAG.matcher(line);
         String tag = "";
         String body = line;
@@ -166,9 +156,12 @@ public final class LogPanel {
             body = line.substring(m.end());
         }
         Color highlight = classify(body);
-        return tag.isEmpty()
-                ? row(highlight != null ? text(body).fg(highlight) : text(body).dim())
-                : row(text(tag).dim(), highlight != null ? text(body).fg(highlight) : text(body).dim());
+        UnaryOperator<TextElement> style = highlight != null ? t -> t.fg(highlight) : TextElement::dim;
+        // Continuation lines hang under the body rather than the tag, so the tag column stays
+        // readable down the log — unless the tag is so long that would leave no room for text.
+        return tag.isEmpty() || tag.length() > wrap / 3
+                ? plainRows(line, wrap, style)
+                : Ui.hanging(text(tag).dim(), tag.length(), body, wrap, style);
     }
 
     /** Picks a highlight colour from build-tool-style markers in a streamed line, or none for plain output. */

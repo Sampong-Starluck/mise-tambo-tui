@@ -14,7 +14,6 @@ import java.util.stream.Collectors;
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.toolkit.event.EventResult;
-import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.input.TextInputState;
 
@@ -52,6 +51,8 @@ public final class RegistryModal {
 
     private static final int VISIBLE_ROWS = 12;
     private static final int WIDTH = 72;
+    /** Columns the dialog's border and padding leave for text. */
+    private static final int TEXT_WIDTH = WIDTH - 4;
 
     private enum Step { TOOL, VERSION }
 
@@ -157,24 +158,34 @@ public final class RegistryModal {
                 ? "type to fuzzy find an added plugin"
                 : "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
+        String emptyMessage = emptyToolListMessage(query, matches);
+        if (emptyMessage != null) {
+            addWrapped(content, emptyMessage);
+        } else {
+            addToolRows(content, matches);
+        }
+    }
+
+    /** Why the tool list has nothing to show, or null when it does. */
+    private @Nullable String emptyToolListMessage(String query, List<CatalogEntry> matches) {
         if (scopedToAdded()) {
             if (addedSdks().isEmpty()) {
-                content.add(text("No plugins added yet — press P to add one from the catalog").dim());
-            } else if (matches.isEmpty()) {
-                content.add(text("No plugin matches \"" + query + "\"").dim());
-            } else {
-                addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
+                return "No plugins added yet — press P to add one from the catalog";
             }
-        } else if (ctx.state().catalog().isEmpty()) {
-            Lazy<List<CatalogEntry>> catalog = ctx.state().catalogLazy();
-            content.add(text(catalog.everLoaded() || catalog.failed()
-                    ? "Catalog unavailable"
-                    : "Loading catalog…").dim());
-        } else if (matches.isEmpty()) {
-            content.add(text("No SDK matches \"" + query + "\"").dim());
-        } else {
-            addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
+            return matches.isEmpty() ? "No plugin matches \"" + query + "\"" : null;
         }
+        if (ctx.state().catalog().isEmpty()) {
+            Lazy<List<CatalogEntry>> catalog = ctx.state().catalogLazy();
+            return catalog.everLoaded() || catalog.failed() ? "Catalog unavailable" : "Loading catalog…";
+        }
+        return matches.isEmpty() ? "No SDK matches \"" + query + "\"" : null;
+    }
+
+    /** The windowed tool list, then the highlighted tool's description in full — the rows cut it. */
+    private void addToolRows(List<Element> content, List<CatalogEntry> matches) {
+        addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
+        content.add(text(""));
+        addWrapped(content, Ui.nullToDash(matches.get(index).description()));
     }
 
     private Element toolRow(List<CatalogEntry> matches, int i) {
@@ -193,42 +204,48 @@ public final class RegistryModal {
         index = Ui.clamp(index, matches.size());
 
         assert tool != null;
-        if (!pinsOnInstall()) {
-            // Selecting a version here only installs it (see confirmVersion) — this backend's
-            // install carries no scope, so there is nothing to toggle.
-            content.add(row(
-                    text("Plugin ").dim(),
-                    text(tool.name()).bold().cyan()
-            ));
-        } else {
-            content.add(row(
-                    text("SDK ").dim(),
-                    text(tool.name()).bold().cyan(),
-                    spacer(),
-                    text("target: ").dim(),
-                    installGlobal ? text("global (ctrl+g)").yellow() : text("this directory (ctrl+g)").green()
-            ));
-        }
+        content.add(versionStepHeader(tool));
         content.add(searchInputRow("Search version", "type to fuzzy find a version"));
         content.add(text(""));
         if (versionsLoading) {
-            content.add(text("Fetching versions of " + tool.name() + " from "
-                    + ctx.backend().name() + "…").dim());
+            addWrapped(content, "Fetching versions of " + tool.name() + " from "
+                    + ctx.backend().name() + "…");
         } else if (matches.isEmpty()) {
-            content.add(text("No version matches \"" + query + "\"").dim());
+            addWrapped(content, "No version matches \"" + query + "\"");
         } else {
-            addWindowedRows(content, matches.size(), i -> {
-                SdkRelease r = matches.get(i);
-                boolean sel = i == index;
-                String label = r.latest() ? r.version() + "  (newest)" : r.version();
-                return row(
-                        text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
-                        sel ? text(label).bold().cyan() : text(label),
-                        spacer(),
-                        r.installed() ? text("installed ").fg(Color.GREEN).dim() : text("")
-                );
-            });
+            addWindowedRows(content, matches.size(), i -> releaseRow(matches, i));
         }
+    }
+
+    /** The chosen tool, and — where installing also pins — which scope the pin goes to. */
+    private Element versionStepHeader(CatalogEntry tool) {
+        if (!pinsOnInstall()) {
+            // Selecting a version here only installs it (see confirmVersion) — this backend's
+            // install carries no scope, so there is nothing to toggle.
+            return row(
+                    text("Plugin ").dim(),
+                    text(tool.name()).bold().cyan()
+            );
+        }
+        return row(
+                text("SDK ").dim(),
+                text(tool.name()).bold().cyan(),
+                spacer(),
+                text("target: ").dim(),
+                installGlobal ? text("global (ctrl+g)").yellow() : text("this directory (ctrl+g)").green()
+        );
+    }
+
+    private Element releaseRow(List<SdkRelease> matches, int i) {
+        SdkRelease r = matches.get(i);
+        boolean sel = i == index;
+        String label = r.latest() ? r.version() + "  (newest)" : r.version();
+        return row(
+                text(sel ? "> " : "  ").fg(Color.CYAN).bold(),
+                sel ? text(label).bold().cyan() : text(label),
+                spacer(),
+                r.installed() ? text("installed ").fg(Color.GREEN).dim() : text("")
+        );
     }
 
     /** Fuzzy-matches the fetched releases by version string. */
@@ -247,6 +264,13 @@ public final class RegistryModal {
                         .focusable(true)
                         .onKeyEvent(this::handleKey)
         );
+    }
+
+    /** Dimmed free text, word-wrapped to the dialog — one element per line. */
+    private static void addWrapped(List<Element> content, String text) {
+        for (String line : Ui.wordWrap(text, TEXT_WIDTH)) {
+            content.add(text(line).dim());
+        }
     }
 
     /** Renders a window of VISIBLE_ROWS rows that follows the selection. */
@@ -310,20 +334,9 @@ public final class RegistryModal {
             confirm();
             return EventResult.HANDLED;
         }
-        if (event.code() == KeyCode.UP) {
-            index = Ui.clamp(index - 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.DOWN) {
-            index = Ui.clamp(index + 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_UP) {
-            index = Ui.clamp(index - VISIBLE_ROWS, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_DOWN) {
-            index = Ui.clamp(index + VISIBLE_ROWS, total);
+        int step = Ui.listStep(event, VISIBLE_ROWS);
+        if (step != 0) {
+            index = Ui.clamp(index + step, total);
             return EventResult.HANDLED;
         }
         if (event.hasCtrl() && event.isCharIgnoreCase('g')) {

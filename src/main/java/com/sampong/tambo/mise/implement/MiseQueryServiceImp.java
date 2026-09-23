@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -36,7 +37,6 @@ import com.sampong.tambo.mise.MiseQueryService;
 import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 
 /**
  * Read-only queries against {@code mise}, mapped into the shared backend-neutral model.
@@ -47,7 +47,6 @@ import lombok.RequiredArgsConstructor;
  * rather than leaking into the type the UI renders.
  */
 @Service
-@RequiredArgsConstructor
 // Native image: these types are only ever reached through Jackson reflection,
 // so Spring AOT must be told to keep their constructors/accessors.
 @RegisterReflectionForBinding({MiseQueryServiceImp.RawVersion.class, MiseQueryServiceImp.RawSource.class,
@@ -60,9 +59,14 @@ public class MiseQueryServiceImp implements MiseQueryService {
     @NonNull
     private final ObjectMapper mapper;
     /** Used to overlap the two subprocess calls {@link #listReleases} needs. */
-    @Qualifier("miseTaskExecutor")
     @NonNull
     private final AsyncTaskExecutor executor;
+
+    public MiseQueryServiceImp(@NonNull MiseCli cli, @NonNull ObjectMapper mapper, @Qualifier("miseTaskExecutor") @NonNull AsyncTaskExecutor executor) {
+        this.cli = cli;
+        this.mapper = mapper;
+        this.executor = executor;
+    }
 
     @Override
     public boolean offline() {
@@ -77,37 +81,30 @@ public class MiseQueryServiceImp implements MiseQueryService {
         }
         try {
             Map<String, List<RawVersion>> raw = mapper.readValue(
-                    result.stdout(), new TypeReference<Map<String, List<RawVersion>>>() {
+                    result.stdout(), new TypeReference<>() {
                     });
-            if (raw == null) {
-                return List.of();
-            }
-            List<SdkVersion> sdks = new ArrayList<>();
-            for (Map.Entry<String, List<RawVersion>> entry : raw.entrySet()) {
-                List<RawVersion> versions = entry.getValue();
-                if (versions == null) {
-                    continue;
-                }
-                for (RawVersion v : versions) {
-                    if (cli.offline() && !v.installed) {
-                        continue;
-                    }
-                    sdks.add(new SdkVersion(
-                            entry.getKey(),
-                            v.version != null ? v.version : "unknown",
-                            v.requestedVersion,
-                            v.installPath,
-                            v.source != null ? v.source.type : null,
-                            v.source != null ? v.source.path : null,
-                            v.installed,
-                            v.active));
-                }
-            }
-            sdks.sort(Comparator.comparing(SdkVersion::name).thenComparing(SdkVersion::version));
-            return sdks;
+            return raw == null ? List.of() : toSdkVersions(raw);
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /**
+     * Flattens {@code mise ls -J}'s {@code name -> [versions]} map into sorted rows. Offline,
+     * only what is on disk is listed — a version that would need a download is unusable.
+     */
+    private List<SdkVersion> toSdkVersions(Map<String, List<RawVersion>> raw) {
+        boolean offline = cli.offline();
+        List<SdkVersion> sdks = new ArrayList<>();
+        for (Map.Entry<String, List<RawVersion>> entry : raw.entrySet()) {
+            for (RawVersion v : Objects.requireNonNullElse(entry.getValue(), List.<RawVersion>of())) {
+                if (v.installed || !offline) {
+                    sdks.add(v.toSdk(entry.getKey()));
+                }
+            }
+        }
+        sdks.sort(Comparator.comparing(SdkVersion::name).thenComparing(SdkVersion::version));
+        return sdks;
     }
 
     @Override
@@ -123,15 +120,9 @@ public class MiseQueryServiceImp implements MiseQueryService {
             Map<String, RawOutdated> raw = mapper.readValue(
                     result.stdout(), new TypeReference<Map<String, RawOutdated>>() {
                     });
-            if (raw == null) {
-                return List.of();
-            }
             List<OutdatedSdk> outdated = new ArrayList<>();
             for (Map.Entry<String, RawOutdated> entry : raw.entrySet()) {
                 RawOutdated v = entry.getValue();
-                if (v == null) {
-                    continue;
-                }
                 // `name` is usually present; fall back to the map key.
                 outdated.add(new OutdatedSdk(v.name != null ? v.name : entry.getKey(), v.current, v.latest));
             }
@@ -148,14 +139,14 @@ public class MiseQueryServiceImp implements MiseQueryService {
             return List.of();
         }
         try {
-            List<RawTask> raw = mapper.readValue(result.stdout(), new TypeReference<List<RawTask>>() {
+            List<RawTask> raw = mapper.readValue(result.stdout(), new TypeReference<>() {
             });
             if (raw == null) {
                 return List.of();
             }
             List<ProjectTask> tasks = new ArrayList<>();
             for (RawTask t : raw) {
-                if (t == null || t.name == null) {
+                if (t.name == null) {
                     continue;
                 }
                 tasks.add(new ProjectTask(t.name, orEmpty(t.aliases), t.description, t.source,
@@ -175,17 +166,17 @@ public class MiseQueryServiceImp implements MiseQueryService {
         }
         try {
             List<RawCatalogEntry> raw = mapper.readValue(
-                    result.stdout(), new TypeReference<List<RawCatalogEntry>>() {
+                    result.stdout(), new TypeReference<>() {
                     });
             if (raw == null) {
                 return List.of();
             }
             List<CatalogEntry> entries = new ArrayList<>();
             for (RawCatalogEntry e : raw) {
-                if (e == null || e.shortName == null) {
+                if (e.shortName == null) {
                     continue;
                 }
-                entries.add(new CatalogEntry(e.shortName, orEmpty(e.backends), e.description, orEmpty(e.aliases)));
+                entries.add(new CatalogEntry(e.shortName, orEmpty(e.backends), e.description, orEmpty(e.aliases1)));
             }
             return entries;
         } catch (Exception e) {
@@ -200,7 +191,7 @@ public class MiseQueryServiceImp implements MiseQueryService {
             return Map.of();
         }
         try {
-            Map<String, String> raw = mapper.readValue(result.stdout(), new TypeReference<Map<String, String>>() {
+            Map<String, String> raw = mapper.readValue(result.stdout(), new TypeReference<>() {
             });
             return raw != null ? new TreeMap<>(raw) : Map.of();
         } catch (Exception e) {
@@ -251,49 +242,85 @@ public class MiseQueryServiceImp implements MiseQueryService {
     @Override
     public BackendInfo info() {
         CliResult result = cli.run(List.of("doctor"));
-        String version = "unknown";
         // `mise activate` exports MISE_SHELL / __MISE_DIFF into the launching
         // shell, and this process inherits them — the most reliable signal on
         // Windows, where doctor prints no "activated:" line at all.
-        boolean activated = activatedFromEnvironment();
-        boolean shimsOnPath = false;
-        int configFiles = 0;
+        DoctorReport doctor = new DoctorReport(activatedFromEnvironment());
         if (result.ok() || !result.stdout().isBlank()) {
-            boolean inConfigFiles = false;
-            boolean inShell = false;
             for (String rawLine : result.stdout().split("\n")) {
-                String line = rawLine.strip();
-                if (inShell) {
-                    // First indented line under "shell:" — "(unknown)" means the
-                    // launching shell never ran `mise activate`.
-                    inShell = false;
-                    if (rawLine.startsWith(" ") && !line.isBlank() && !line.startsWith("(unknown")) {
-                        activated = true;
-                    }
-                }
-                if (line.startsWith("version:")) {
-                    version = line.substring("version:".length()).strip();
-                } else if (line.startsWith("activated:")) {
-                    activated = activated
-                            || line.substring("activated:".length()).strip().equalsIgnoreCase("yes");
-                } else if (line.startsWith("MISE_SHELL=")) {
-                    activated = true;
-                } else if (line.equals("shell:")) {
-                    inShell = true;
-                } else if (line.startsWith("shims_on_path:")) {
-                    shimsOnPath = line.substring("shims_on_path:".length()).strip().equalsIgnoreCase("yes");
-                } else if (line.startsWith("config_files:")) {
-                    inConfigFiles = true;
-                } else if (inConfigFiles) {
-                    if (rawLine.isBlank() || !rawLine.startsWith(" ")) {
-                        inConfigFiles = false;
-                    } else {
-                        configFiles++;
-                    }
-                }
+                doctor.accept(rawLine);
             }
         }
-        return BackendInfo.health("mise", version, activated, shimsOnPath, configFiles);
+        return BackendInfo.health("mise", doctor.version, doctor.activated, doctor.shimsOnPath, doctor.configFiles);
+    }
+
+    /**
+     * Reads the parts of {@code mise doctor}'s output the header and Status panel show, one
+     * line at a time. Two of them are sections rather than {@code key: value} lines — the
+     * {@code shell:} block and the {@code config_files:} list — which is what the two
+     * {@code in…} flags track.
+     */
+    private static final class DoctorReport {
+        private String version = "unknown";
+        private boolean activated;
+        private boolean shimsOnPath;
+        private int configFiles;
+        private boolean inConfigFiles;
+        private boolean inShell;
+
+        DoctorReport(boolean activated) {
+            this.activated = activated;
+        }
+
+        void accept(String rawLine) {
+            String line = rawLine.strip();
+            if (inShell) {
+                inShell = false;
+                activated |= shellIsActivated(rawLine, line);
+            }
+            // Checked in this order on purpose: a key line always wins over the section the
+            // previous lines were in.
+            if (line.startsWith("version:")) {
+                version = valueOf(line, "version:");
+            } else if (line.startsWith("activated:")) {
+                activated |= isYes(valueOf(line, "activated:"));
+            } else if (line.startsWith("MISE_SHELL=")) {
+                activated = true;
+            } else if (line.equals("shell:")) {
+                inShell = true;
+            } else if (line.startsWith("shims_on_path:")) {
+                shimsOnPath = isYes(valueOf(line, "shims_on_path:"));
+            } else if (line.startsWith("config_files:")) {
+                inConfigFiles = true;
+            } else if (inConfigFiles) {
+                countConfigFile(rawLine);
+            }
+        }
+
+        /**
+         * The first indented line under {@code shell:} names the launching shell;
+         * {@code (unknown)} means it never ran {@code mise activate}.
+         */
+        private static boolean shellIsActivated(String rawLine, String line) {
+            return rawLine.startsWith(" ") && !line.isBlank() && !line.startsWith("(unknown");
+        }
+
+        /** An indented line is one more file; anything else ends the list. */
+        private void countConfigFile(String rawLine) {
+            if (rawLine.isBlank() || !rawLine.startsWith(" ")) {
+                inConfigFiles = false;
+            } else {
+                configFiles++;
+            }
+        }
+
+        private static String valueOf(String line, String key) {
+            return line.substring(key.length()).strip();
+        }
+
+        private static boolean isYes(String value) {
+            return value.equalsIgnoreCase("yes");
+        }
     }
 
     private static boolean activatedFromEnvironment() {
@@ -355,6 +382,18 @@ public class MiseQueryServiceImp implements MiseQueryService {
         public @Nullable RawSource source;
         public boolean installed;
         public boolean active;
+
+        SdkVersion toSdk(String name) {
+            return new SdkVersion(
+                    name,
+                    version != null ? version : "unknown",
+                    requestedVersion,
+                    installPath,
+                    source != null ? source.type : null,
+                    source != null ? source.path : null,
+                    installed,
+                    active);
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -388,6 +427,6 @@ public class MiseQueryServiceImp implements MiseQueryService {
         public @Nullable String shortName;
         public @Nullable List<String> backends;
         public @Nullable String description;
-        public @Nullable List<String> aliases;
+        public @Nullable List<String> aliases1;
     }
 }

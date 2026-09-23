@@ -9,6 +9,7 @@ import static dev.tamboui.toolkit.Toolkit.text;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 import dev.tamboui.layout.Padding;
 import dev.tamboui.style.Color;
@@ -51,6 +52,10 @@ public final class DetailPanel {
      * ("Shims on PATH"), so even that one keeps a space before its value.
      */
     private static final int LABEL_WIDTH = 15;
+    /** Width of the key column in the welcome text's key/description rows. */
+    private static final int WELCOME_KEY_WIDTH = 10;
+    /** Space between two key hints on one row. */
+    private static final String HINT_GAP = "   ";
     /** Rows the mouse wheel scrolls the pane by, matching {@code LogPanel}. */
     private static final int WHEEL_STEP = 3;
 
@@ -84,59 +89,16 @@ public final class DetailPanel {
         SidePanels.Side side = sidePanels.focused();
         int wrap = Math.max(20, width - CHROME_WIDTH);
         List<Element> lines = new ArrayList<>();
-        String title;
-
-        if (!sidePanels.available(side)) {
-            title = side.title();
-            addUnsupported(lines, side, wrap);
-        } else {
-            switch (side) {
-                case STATUS -> {
-                    title = ctx.backend().name();
-                    addBackendReport(lines);
-                }
-                case TOOLS -> {
-                    SdkVersion tool = toolsPanel.selected();
-                    title = tool == null ? "Tools" : tool.name();
-                    if (tool == null) {
-                        addWelcome(lines);
-                    } else {
-                        addToolDetail(lines, tool);
-                    }
-                }
-                case ENV -> {
-                    Map.Entry<String, String> entry = envPanel.selected();
-                    title = entry == null ? "Env" : entry.getKey();
-                    if (entry == null) {
-                        addEmpty(lines, "No environment variable selected.");
-                    } else {
-                        addEnvDetail(lines, entry, wrap);
-                    }
-                }
-                case TASKS -> {
-                    ProjectTask task = tasksPanel.selected();
-                    title = task == null ? "Tasks" : task.name();
-                    if (task == null) {
-                        addEmpty(lines, "No task selected.");
-                    } else {
-                        addTaskDetail(lines, task, wrap);
-                    }
-                }
-                case ADVANCED -> {
-                    AdvancedPanel.Action action = advancedPanel.selected(advancedActions);
-                    title = action == null ? "Advanced" : action.label();
-                    if (action == null) {
-                        addEmpty(lines, "Nothing to do here right now.");
-                    } else {
-                        addActionDetail(lines, action, wrap);
-                    }
-                }
-                default -> {
-                    title = side.title();
-                    addWelcome(lines);
-                }
-            }
-        }
+        // Each body fills the lines for its panel's selection and names the pane after it.
+        String title = !sidePanels.available(side)
+                ? addUnsupported(lines, side, wrap)
+                : switch (side) {
+                    case STATUS -> addBackendReport(lines, wrap);
+                    case TOOLS -> addToolDetail(lines, wrap);
+                    case ENV -> addEnvDetail(lines, wrap);
+                    case TASKS -> addTaskDetail(lines, wrap);
+                    case ADVANCED -> addActionDetail(lines, wrap, advancedActions);
+                };
 
         // A scrolling list rather than a plain column: a capability report, a PATH or a task's
         // script can all be taller than the pane, and a column would simply cut the rest off
@@ -184,7 +146,7 @@ public final class DetailPanel {
      * question this app used to leave the user guessing at — whether a missing panel means the
      * backend has no such concept or the app failed to load it.
      */
-    private void addBackendReport(List<Element> lines) {
+    private String addBackendReport(List<Element> lines, int wrap) {
         ctx.actions().ensureBackendInfo();
         String name = ctx.backend().name();
         boolean known = ctx.state().backendInfoLazy().everLoaded();
@@ -193,56 +155,60 @@ public final class DetailPanel {
         lines.add(field("Backend", text(name).bold().cyan()));
         lines.add(field("Version", known ? text(info.version()) : text("checking…").dim()));
         lines.add(field("UI backend", text(ctx.uiBackend()).dim()));
-        lines.add(field("Config file", text(ctx.backend().projectConfigFileName()).dim()));
+        addField(lines, "Config file", ctx.backend().projectConfigFileName(), wrap, TextElement::dim);
         if (known && info.reportsHealth()) {
             lines.add(field("Activated", Ui.badge(info.activated())));
             lines.add(field("Shims on PATH", Ui.badge(info.shimsOnPath())));
             lines.add(field("Config files", text(String.valueOf(info.configFileCount()))));
         }
         lines.add(text(""));
-        lines.add(text("What " + name + " can do here").bold());
+        addWrapped(lines, "What " + name + " can do here", wrap, TextElement::bold);
         for (BackendFeature feature : BackendFeature.values()) {
             boolean supported = ctx.supports(feature);
-            lines.add(row(
-                    text(supported ? " ✓ " : " · ").fg(supported ? Color.GREEN : Color.DARK_GRAY),
-                    supported ? text(feature.label()) : text(feature.label()).dim()));
+            lines.addAll(Ui.hanging(
+                    text(supported ? " ✓ " : " · ").fg(supported ? Color.GREEN : Color.DARK_GRAY), 3,
+                    feature.label(), wrap, supported ? t -> t : TextElement::dim));
         }
+        return name;
     }
 
-    private void addToolDetail(List<Element> lines, SdkVersion t) {
+    private String addToolDetail(List<Element> lines, int wrap) {
+        SdkVersion t = toolsPanel.selected();
+        if (t == null) {
+            addWelcome(lines, wrap);
+            return "Tools";
+        }
         Color statusColor = t.active() ? Color.CYAN : t.installed() ? Color.GREEN : Color.DARK_GRAY;
         boolean pendingChange = t.requested() != null && !t.requested().isBlank()
                 && !t.requested().equals(t.version());
-        TextElement requested = text(Ui.nullToDash(t.requested()));
-        if (pendingChange) {
-            requested = requested.bold().yellow();
-        }
         String latest = ctx.state().outdated().get(t.name());
 
         lines.add(field("Tool", text(t.name()).bold().cyan()));
         lines.add(field("Version", text(t.hasVersion() ? t.version() : "-").fg(statusColor)));
-        lines.add(field("Requested", requested));
+        addField(lines, "Requested", Ui.nullToDash(t.requested()), wrap,
+                pendingChange ? r -> r.bold().yellow() : r -> r);
         lines.add(field("Installed", Ui.badge(t.installed())));
         lines.add(field("Active", Ui.badge(t.active())));
-        lines.add(field("Source", text(Ui.nullToDash(t.sourceType())).dim()));
-        lines.add(field("Install path", text(Ui.nullToDash(t.installPath())).dim()));
+        addField(lines, "Source", Ui.nullToDash(t.sourceType()), wrap, TextElement::dim);
+        addField(lines, "Install path", Ui.nullToDash(t.installPath()), wrap, TextElement::dim);
         if (latest != null) {
-            lines.add(field("Upgrade", text("↑ " + latest + " available").yellow()));
+            addField(lines, "Upgrade", "↑ " + latest + " available", wrap, TextElement::yellow);
         }
         if (pendingChange) {
             lines.add(text(""));
-            lines.add(text(ctx.backend().projectConfigFileName() + " asks for "
-                    + t.requested() + ", which is not what is installed.").yellow());
+            addWrapped(lines, ctx.backend().projectConfigFileName() + " asks for "
+                    + t.requested() + ", which is not what is installed.", wrap, TextElement::yellow);
         }
         lines.add(text(""));
-        lines.add(hints(
-                Ui.keyHint("i", "install"),
-                Ui.keyHint("u", "use in " + ctx.backend().projectConfigFileName()),
-                Ui.keyHint("g", "set global")));
-        lines.add(hints(
-                Ui.keyHint("x", "uninstall"),
-                Ui.keyHint("R", "remove from config"),
-                Ui.keyHint("d", "remove plugin")));
+        addHints(lines, wrap,
+                new Hint("i", "install"),
+                new Hint("u", "use in " + ctx.backend().projectConfigFileName()),
+                new Hint("g", "set global"));
+        addHints(lines, wrap,
+                new Hint("x", "uninstall"),
+                new Hint("R", "remove from config"),
+                new Hint("d", "remove plugin"));
+        return t.name();
     }
 
     /**
@@ -250,7 +216,12 @@ public final class DetailPanel {
      * routinely several hundred characters, and every attempt to show it in the sidebar — a
      * clipped column, a sideways pan — was worse than simply giving it the room.
      */
-    private void addEnvDetail(List<Element> lines, Map.Entry<String, String> entry, int wrap) {
+    private String addEnvDetail(List<Element> lines, int wrap) {
+        Map.Entry<String, String> entry = envPanel.selected();
+        if (entry == null) {
+            addWrapped(lines, "No environment variable selected.", wrap, TextElement::dim);
+            return "Env";
+        }
         String value = entry.getValue();
         List<String> wrapped = Ui.wrapValue(value, wrap);
         lines.add(field("Variable", text(entry.getKey()).bold().yellow()));
@@ -266,16 +237,22 @@ public final class DetailPanel {
             lines.add(text(line));
         }
         lines.add(text(""));
-        lines.add(hints(Ui.keyHint("y", "copy value")));
+        addHints(lines, wrap, new Hint("y", "copy value"));
+        return entry.getKey();
     }
 
-    private void addTaskDetail(List<Element> lines, ProjectTask t, int wrap) {
+    private String addTaskDetail(List<Element> lines, int wrap) {
+        ProjectTask t = tasksPanel.selected();
+        if (t == null) {
+            addWrapped(lines, "No task selected.", wrap, TextElement::dim);
+            return "Tasks";
+        }
         boolean running = ctx.state().isBusy("task:" + t.name());
         lines.add(field("Task", text(t.name()).bold().cyan()));
-        lines.add(field("Description", text(Ui.nullToDash(t.description()))));
-        lines.add(field("Source", text(Ui.nullToDash(t.source())).dim()));
-        lines.add(field("Aliases", text(t.aliasSummary()).dim()));
-        lines.add(field("Depends on", text(t.dependsSummary()).dim()));
+        addField(lines, "Description", Ui.nullToDash(t.description()), wrap, d -> d);
+        addField(lines, "Source", Ui.nullToDash(t.source()), wrap, TextElement::dim);
+        addField(lines, "Aliases", t.aliasSummary(), wrap, TextElement::dim);
+        addField(lines, "Depends on", t.dependsSummary(), wrap, TextElement::dim);
         if (running) {
             lines.add(field("State", text(Ui.spinner() + " running").yellow()));
         }
@@ -285,41 +262,46 @@ public final class DetailPanel {
             lines.add(text(line).fg(Color.CYAN));
         }
         lines.add(text(""));
-        lines.add(hints(
-                Ui.keyHint("Enter", "run"),
-                Ui.keyHint(":", "run with args"),
-                Ui.keyHint(".", "re-run last"),
-                Ui.keyHint("c", "cancel")));
+        addHints(lines, wrap,
+                new Hint("Enter", "run"),
+                new Hint(":", "run with args"),
+                new Hint(".", "re-run last"),
+                new Hint("c", "cancel"));
+        return t.name();
     }
 
-    private void addActionDetail(List<Element> lines, AdvancedPanel.Action action, int wrap) {
-        lines.add(row(text(" " + action.key() + " ").bold().yellow(), text(action.label()).bold()));
+    private String addActionDetail(List<Element> lines, int wrap, List<AdvancedPanel.Action> actions) {
+        AdvancedPanel.Action action = advancedPanel.selected(actions);
+        if (action == null) {
+            addWrapped(lines, "Nothing to do here right now.", wrap, TextElement::dim);
+            return "Advanced";
+        }
+        lines.addAll(Ui.hanging(text(" " + action.key() + " ").bold().yellow(), action.key().length() + 2,
+                action.label(), wrap, TextElement::bold));
         lines.add(text(""));
         for (String line : Ui.wordWrap(action.description(), wrap)) {
             lines.add(text(line).dim());
         }
         lines.add(text(""));
-        lines.add(hints(Ui.keyHint("Enter", "run this"), Ui.keyHint(action.key(), "same, from anywhere")));
+        addHints(lines, wrap, new Hint("Enter", "run this"), new Hint(action.key(), "same, from anywhere"));
+        return action.label();
     }
 
     /** The backend's own explanation for a panel it cannot serve, rather than an empty pane. */
-    private void addUnsupported(List<Element> lines, SidePanels.Side side, int wrap) {
-        lines.add(text(side.title() + " is not available with " + ctx.backend().name())
-                .bold().fg(Color.YELLOW));
+    private String addUnsupported(List<Element> lines, SidePanels.Side side, int wrap) {
+        addWrapped(lines, side.title() + " is not available with " + ctx.backend().name(), wrap,
+                t -> t.bold().fg(Color.YELLOW));
         lines.add(text(""));
         for (String line : Ui.wordWrap(sidePanels.unsupportedReason(side), wrap)) {
             lines.add(text(line).dim());
         }
         lines.add(text(""));
-        lines.add(text("The panel keeps its slot so the number keys mean the same thing "
-                + "under either backend.").dim());
+        addWrapped(lines, "The panel keeps its slot so the number keys mean the same thing "
+                + "under either backend.", wrap, TextElement::dim);
+        return side.title();
     }
 
-    private void addEmpty(List<Element> lines, String message) {
-        lines.add(text(message).dim());
-    }
-
-    private void addWelcome(List<Element> lines) {
+    private void addWelcome(List<Element> lines, int wrap) {
         lines.add(text("tambo").bold().cyan());
         String backendName = ctx.backend().name();
         ctx.actions().ensureBackendInfo();
@@ -327,12 +309,14 @@ public final class DetailPanel {
                 ? text(backendName + " " + ctx.state().backendInfo().version()).fg(Color.GREEN)
                 : text("checking " + backendName + "…").dim());
         lines.add(text(""));
-        lines.add(row(text("Jump to a panel with ").dim(), text("1-5").bold().yellow(),
-                text(", or ").dim(), text("Tab").bold().yellow(), text(" to cycle.").dim()));
-        lines.add(row(text("Press ").dim(), text("a").bold().yellow(),
-                text(" to fuzzy-find and install an SDK from the registry.").dim()));
-        lines.add(row(text("Press ").dim(), text("?").bold().yellow(),
-                text(" for the full key reference.").dim()));
+        // Key-first rows rather than "Press a to …" sentences: a sentence with the key styled
+        // mid-way is several spans that cannot wrap as one, while a key column can.
+        lines.addAll(Ui.hanging(text(Ui.fixedWidth("1-5, Tab", WELCOME_KEY_WIDTH)).bold().yellow(),
+                WELCOME_KEY_WIDTH, "jump to a panel, or cycle through them", wrap, TextElement::dim));
+        lines.addAll(Ui.hanging(text(Ui.fixedWidth("a", WELCOME_KEY_WIDTH)).bold().yellow(),
+                WELCOME_KEY_WIDTH, "fuzzy-find and install an SDK from the registry", wrap, TextElement::dim));
+        lines.addAll(Ui.hanging(text(Ui.fixedWidth("?", WELCOME_KEY_WIDTH)).bold().yellow(),
+                WELCOME_KEY_WIDTH, "the full key reference", wrap, TextElement::dim));
     }
 
     // ==================== small builders ====================
@@ -342,15 +326,54 @@ public final class DetailPanel {
         return row(text(Ui.fixedWidth(label, LABEL_WIDTH)).dim(), value);
     }
 
-    /** A row of {@code [key] label} hints, spaced apart. */
-    private static Element hints(Element... keyHints) {
-        List<Element> parts = new ArrayList<>();
-        for (Element hint : keyHints) {
-            if (!parts.isEmpty()) {
-                parts.add(text("   "));
-            }
-            parts.add(hint);
+    /**
+     * A {@code label   value} field whose value word-wraps under itself, the label column left
+     * blank on the continuation lines — for the values that can outgrow the pane, a path or a
+     * task's description.
+     */
+    private static void addField(List<Element> lines, String label, String value, int wrap,
+                                 UnaryOperator<TextElement> style) {
+        lines.addAll(Ui.hanging(text(Ui.fixedWidth(label, LABEL_WIDTH)).dim(), LABEL_WIDTH, value, wrap, style));
+    }
+
+    /** Free text, word-wrapped to the pane — one element per line, each styled by {@code style}. */
+    private static void addWrapped(List<Element> lines, String text, int wrap, UnaryOperator<TextElement> style) {
+        for (String line : Ui.wordWrap(text, wrap)) {
+            lines.add(style.apply(text(line)));
         }
-        return row(parts.toArray(new Element[0]));
+    }
+
+    /** A {@code [key] label} hint, as {@link Ui#keyHint} renders it. */
+    private record Hint(String key, String label) {
+
+        /** Columns {@link Ui#keyHint} spends on it: the brackets, the space, and both texts. */
+        int width() {
+            return key.length() + 3 + label.length();
+        }
+    }
+
+    /**
+     * {@code [key] label} hints, spaced apart and flowed onto as many rows as {@code wrap}
+     * needs — a narrow pane gets two short rows rather than one row cut off at the edge.
+     */
+    private static void addHints(List<Element> lines, int wrap, Hint... hints) {
+        List<Element> parts = new ArrayList<>();
+        int used = 0;
+        for (Hint hint : hints) {
+            if (!parts.isEmpty() && used + HINT_GAP.length() + hint.width() > wrap) {
+                lines.add(row(parts.toArray(new Element[0])));
+                parts.clear();
+                used = 0;
+            }
+            if (!parts.isEmpty()) {
+                parts.add(text(HINT_GAP));
+                used += HINT_GAP.length();
+            }
+            parts.add(Ui.keyHint(hint.key(), hint.label()));
+            used += hint.width();
+        }
+        if (!parts.isEmpty()) {
+            lines.add(row(parts.toArray(new Element[0])));
+        }
     }
 }

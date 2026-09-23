@@ -20,7 +20,6 @@ public final class Lazy<T> {
     /** Returned by {@link #claim()} when no load is needed — the value is fresh or already in flight. */
     public static final int NO_LOAD = -1;
 
-    private final T placeholder;
     private T value;
     /** The value reflects a load that completed since the last {@link #invalidate()}. */
     private boolean fresh;
@@ -42,7 +41,6 @@ public final class Lazy<T> {
     private int generation;
 
     public Lazy(T placeholder) {
-        this.placeholder = placeholder;
         this.value = placeholder;
     }
 
@@ -119,12 +117,5 @@ public final class Lazy<T> {
             this.loading = false;
             this.generation++;
         }
-    }
-
-    /** Drops back to the placeholder entirely, as if nothing had ever been loaded. */
-    public void reset() {
-        invalidate();
-        this.value = placeholder;
-        this.everLoaded = false;
     }
 }

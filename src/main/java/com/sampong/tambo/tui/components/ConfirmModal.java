@@ -3,6 +3,9 @@ package com.sampong.tambo.tui.components;
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.text;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.event.KeyEvent;
@@ -28,6 +31,8 @@ import lombok.RequiredArgsConstructor;
 public final class ConfirmModal {
 
     private static final int WIDTH = 60;
+    /** Columns the dialog's border and padding leave for the message. */
+    private static final int TEXT_WIDTH = WIDTH - 4;
 
     @NonNull
     private final UiContext ctx;
@@ -82,10 +87,15 @@ public final class ConfirmModal {
     }
 
     public Element build() {
-        return dialog("Confirm",
-                text(message),
-                text(""),
-                text("y / enter confirm   n / esc cancel").dim()
-        ).rounded().borderColor(Color.YELLOW).width(WIDTH);
+        // The message is whatever the caller asked about — often a path or a list of tools —
+        // so it is wrapped to the dialog rather than trusted to fit on one line.
+        List<Element> content = new ArrayList<>();
+        for (String line : Ui.wordWrap(message, TEXT_WIDTH)) {
+            content.add(text(line));
+        }
+        content.add(text(""));
+        content.add(text("y / enter confirm   n / esc cancel").dim());
+        return dialog("Confirm", content.toArray(new Element[0]))
+                .rounded().borderColor(Color.YELLOW).width(WIDTH);
     }
 }
