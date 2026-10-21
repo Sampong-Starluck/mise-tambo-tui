@@ -5,9 +5,11 @@ import static dev.tamboui.toolkit.Toolkit.text;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.UnaryOperator;
 
 import dev.tamboui.style.Color;
 import dev.tamboui.toolkit.element.Element;
+import dev.tamboui.toolkit.elements.TextElement;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.table.TableState;
@@ -97,6 +99,21 @@ public final class Ui {
         return true;
     }
 
+    /**
+     * How far an arrow or page key moves a modal's list — {@code page} rows for PgUp/PgDn — or 0
+     * for any other key. Unlike {@link #applyNav} there is no j/k: in a modal those are letters
+     * being typed into its search box.
+     */
+    public static int listStep(KeyEvent event, int page) {
+        return switch (event.code()) {
+            case UP -> -1;
+            case DOWN -> 1;
+            case PAGE_UP -> -page;
+            case PAGE_DOWN -> page;
+            default -> 0;
+        };
+    }
+
     /** Rows a page key moves by. */
     private static final int PAGE = 10;
 
@@ -149,13 +166,6 @@ public final class Ui {
     }
 
     /**
-     * Word-wraps {@code text} to at most {@code width} columns per line. Done by hand rather
-     * than relying on TextElement's own {@code Overflow.WRAP_WORD} — that flag didn't actually
-     * reflow multi-line content inside a list item / dialog in practice, so callers get back
-     * plain lines they add as separate elements instead, which renders correctly everywhere
-     * else in this app. A single word longer than {@code width} is kept whole rather than cut.
-     */
-    /**
      * Breaks {@code text} into {@code width}-column chunks at exactly the column, with no regard
      * for word boundaries. For values that are not prose and have no spaces to break on — an
      * environment variable's value above all — where {@link #wordWrap} would keep the whole
@@ -185,22 +195,58 @@ public final class Ui {
         return lines;
     }
 
+    /**
+     * Word-wraps {@code text} to at most {@code width} columns per line. Done by hand rather
+     * than relying on TextElement's own {@code Overflow.WRAP_WORD} — that flag didn't actually
+     * reflow multi-line content inside a list item / dialog in practice, so callers get back
+     * plain lines they add as separate elements instead, which renders correctly everywhere
+     * else in this app.
+     * <p>
+     * Line breaks already in the text are kept, and a single word longer than {@code width} — a
+     * path, a URL — is {@link #hardWrap hard-wrapped} rather than left for the renderer to clip.
+     * Always returns at least one line, so a caller pairing the first line with a label never
+     * loses the label to empty text.
+     */
     public static List<String> wordWrap(String text, int width) {
         List<String> lines = new ArrayList<>();
+        for (String paragraph : text.split("\r?\n", -1)) {
+            wrapParagraph(paragraph, width, lines);
+        }
+        return lines;
+    }
+
+    /** {@link #wordWrap} for one paragraph (no line breaks of its own), appending to {@code lines}. */
+    private static void wrapParagraph(String paragraph, int width, List<String> lines) {
         StringBuilder line = new StringBuilder();
-        for (String word : text.split(" ")) {
+        for (String word : paragraph.split(" ")) {
             if (!line.isEmpty() && line.length() + 1 + word.length() > width) {
                 lines.add(line.toString());
                 line.setLength(0);
             }
-            if (!line.isEmpty()) {
-                line.append(' ');
+            String rest = word;
+            if (width > 0 && word.length() > width) {
+                List<String> chunks = hardWrap(word, width);
+                lines.addAll(chunks.subList(0, chunks.size() - 1));
+                rest = chunks.getLast();
             }
-            line.append(word);
+            line.append(line.isEmpty() ? "" : " ").append(rest);
         }
-        if (!line.isEmpty()) {
-            lines.add(line.toString());
+        lines.add(line.toString());
+    }
+
+    /**
+     * Word-wraps {@code text} beside a fixed-width lead — a key, a field label, a log tag. The
+     * first line sits next to the lead and the rest are indented to line up under the text, so
+     * a long value still reads as one block. {@code style} is applied to every line of text.
+     */
+    public static List<Element> hanging(Element lead, int leadWidth, String text, int width,
+                                        UnaryOperator<TextElement> style) {
+        List<String> wrapped = wordWrap(text, Math.max(1, width - leadWidth));
+        List<Element> rows = new ArrayList<>(wrapped.size());
+        for (int i = 0; i < wrapped.size(); i++) {
+            Element left = i == 0 ? lead : text(" ".repeat(leadWidth));
+            rows.add(row(left, style.apply(text(wrapped.get(i)))));
         }
-        return lines;
+        return rows;
     }
 }

@@ -205,9 +205,7 @@ public final class ToolsPanel {
         lines.add(Line.styled("No tools in this project yet", Style.create().bold()));
         lines.add(Line.empty());
         lines.add(Line.from(Span.styled("a       ", key), Span.raw("add an SDK")));
-        if (ctx.supports(BackendFeature.INSTALL_ALL)) {
-            lines.add(Line.from(Span.styled("Space i ", key), Span.raw("install everything in config")));
-        }
+        lines.add(Line.from(Span.styled("I       ", key), Span.raw("install everything in " + ctx.backend().projectConfigFileName())));
         lines.add(Line.from(Span.styled("Ctrl+P  ", key), Span.raw("browse all commands")));
         return lines;
     }
@@ -489,11 +487,19 @@ public final class ToolsPanel {
         }
     }
 
+    /**
+     * An SDK registered with no version installed has no name@version of its own. If the
+     * project config declares one, that is the version meant: install it and pin it at project
+     * scope. Otherwise "install" means "pick a version" — the Add SDK wizard's version step.
+     */
     private void install(SdkVersion sdk) {
-        // An SDK registered with no version installed has no name@version to install, so
-        // "install" means "pick a version" — the catalog's version step does exactly that.
         if (sdk.hasVersion()) {
             ctx.actions().installSdk(sdk);
+            return;
+        }
+        String declared = ctx.actions().declaredVersion(sdk.name());
+        if (declared != null) {
+            ctx.actions().useSdk(sdk.name() + "@" + declared, false);
         } else {
             ctx.promptVersionFor(sdk.name());
         }

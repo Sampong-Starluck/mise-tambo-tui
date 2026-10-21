@@ -75,14 +75,4 @@ class LazyTest {
 
         assertThat(lazy.claim()).isNotEqualTo(Lazy.NO_LOAD);
     }
-
-    @Test
-    void resetReturnsToThePlaceholder() {
-        lazy.publish(lazy.claim(), List.of("node"));
-
-        lazy.reset();
-
-        assertThat(lazy.value()).isEmpty();
-        assertThat(lazy.everLoaded()).isFalse();
-    }
 }

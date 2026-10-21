@@ -29,6 +29,7 @@ import dev.tamboui.toolkit.elements.Panel;
 
 import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo._common.util.AppVersion;
 import com.sampong.tambo.tui.TuiComponents;
 import com.sampong.tambo.tui.components.FKeyBar;
 import com.sampong.tambo.tui.components.JobsView;
@@ -184,6 +185,9 @@ public final class AppLayout {
         if (ui.addPluginModal().isOpen()) {
             return ui.addPluginModal().build();
         }
+        if (ui.autoInstallModal().isOpen()) {
+            return ui.autoInstallModal().build();
+        }
         return null;
     }
 
@@ -238,7 +242,7 @@ public final class AppLayout {
                 buildSidebar(bodyHeight).constraint(length(sidebarWidth)),
                 column(
                         sized(main, fill(MAIN_WEIGHT)),
-                        labelledLog().constraint(fill(LOG_WEIGHT))
+                        labelledLog(mainWidth).constraint(fill(LOG_WEIGHT))
                 ).constraint(fill()));
     }
 
@@ -254,7 +258,7 @@ public final class AppLayout {
             int stackHeight = bodyHeight * MAIN_WEIGHT / (MAIN_WEIGHT + LOG_WEIGHT);
             return column(
                     buildSidebar(stackHeight).constraint(fill(MAIN_WEIGHT)),
-                    labelledLog().constraint(fill(LOG_WEIGHT)));
+                    labelledLog(size(terminalWidth, ASSUMED_WIDTH)).constraint(fill(LOG_WEIGHT)));
         }
         boolean detail = ctx.state().narrowDetail();
         Line crumb = Line.from(
@@ -305,8 +309,8 @@ public final class AppLayout {
         return labelled(built, side);
     }
 
-    private StyledElement<?> labelledLog() {
-        Element log = ui.logPanel().build();
+    private StyledElement<?> labelledLog(int width) {
+        Element log = ui.logPanel().build(width);
         return log instanceof Panel panel ? jumpLabel(panel, '5', "Log") : (StyledElement<?>) log;
     }
 
@@ -352,7 +356,8 @@ public final class AppLayout {
         String name = ctx.backend().name();
         ctx.actions().ensureBackendInfo();
         List<Element> left = new ArrayList<>();
-        left.add(text(" tambo").bold().cyan());
+        left.add(text(" tambo ").bold().cyan());
+        left.add(appVersion());
         // The folder is the first thing to go on a narrow terminal: the shell prompt already
         // says it, while nothing else on screen says which backend or whether it is trusted.
         left.add(text(width >= 110 ? "  " + Ui.truncate(workingDir(), width / 3) + "  ·  " : "  ").dim());
@@ -408,6 +413,15 @@ public final class AppLayout {
             return text(Ui.spinner() + " " + ProgressBar.compact(progress.getFirst()) + "  ").cyan();
         }
         return text(Ui.spinner() + " " + ctx.state().busyCount() + " running  ").cyan();
+    }
+
+    /**
+     * tambo's own version beside its name — the same string {@code --version} prints, so a
+     * screenshot of the header says which build it came from.
+     */
+    private static Element appVersion() {
+        String version = AppVersion.get();
+        return text(AppVersion.DEVELOPMENT.equals(version) ? "dev" : "v" + version).cyan();
     }
 
     private static String workingDir() {
@@ -519,6 +533,9 @@ public final class AppLayout {
         if (ui.addPluginModal().isOpen()) {
             return ui.addPluginModal().footerHint();
         }
+        if (ui.autoInstallModal().isOpen()) {
+            return ui.autoInstallModal().footerHint();
+        }
         if (ui.registryModal().isOpen()) {
             return ui.registryModal().footerHint();
         }
@@ -538,7 +555,7 @@ public final class AppLayout {
     private String panelHints() {
         SidePanels sides = ui.sidePanels();
         if (sides.logFocused()) {
-            return "↑↓ scroll  ←→ pan  PgUp/PgDn page  End follow";
+            return "↑↓ scroll  PgUp/PgDn page  End follow";
         }
         if (sides.versionsFocused()) {
             return ui.versionsPanel().footerHint();

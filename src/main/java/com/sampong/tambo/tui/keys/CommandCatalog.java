@@ -78,10 +78,10 @@ public final class CommandCatalog {
             list.add(cmd("project.trust", "Trust " + configFile, Group.PROJECT, "Space t", 't', false,
                     ctx.actions()::trustProject));
         }
-        if (ctx.supports(BackendFeature.INSTALL_ALL)) {
-            list.add(cmd("project.installAll", "Install everything in config", Group.PROJECT, "Space i", 'i', false,
-                    ctx.actions()::installAll));
-        }
+        // Auto-install is the one "install everything in config": it installs what is missing,
+        // pins what is already there, and asks about near-misses rather than re-downloading them.
+        list.add(cmd("project.autoInstall", "Install everything in " + configFile, Group.PROJECT,
+                "I", 'i', false, () -> ctx.actions().autoInstall(ctx::promptAutoInstall)));
         list.add(cmd("project.edit", "Edit " + configFile, Group.PROJECT, "e", 'e', false, keys::openProjectConfig));
         if (ctx.supports(BackendFeature.GLOBAL_CONFIG)) {
             list.add(cmd("project.editGlobal", "Edit global config", Group.PROJECT, "Space E", 'E', false,

@@ -1,11 +1,15 @@
 package com.sampong.tambo.tui.state;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 
+import com.sampong.tambo._common.model.AutoInstallStep;
 import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.tui.MiseTuiApp;
+import com.sampong.tambo.tui.features.AutoInstallPrompt;
 import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.features.Theme;
 
@@ -89,5 +93,19 @@ public interface UiContext {
     /** Uninstalls {@code sdks} after a confirmation that lists each one and defaults to No. */
     default void requestUninstall(List<SdkVersion> sdks) {
         throw new UnsupportedOperationException("requestUninstall");
+    }
+
+    /**
+     * Walks the user through the near-misses auto-install found — a tool whose installed
+     * version and config version differ only within the same major release — collecting one
+     * answer per tool. Implements {@link AutoInstallPrompt}, which is how
+     * {@link BackendActions#autoInstall} takes it: the action layer owns the plan and the
+     * commands, and is handed the way to ask rather than a whole {@code UiContext}.
+     *
+     * @see com.sampong.tambo.tui.components.AutoInstallModal
+     */
+    default void promptAutoInstall(List<AutoInstallStep> undecided,
+                                   Consumer<Map<String, String>> onDecided, Runnable onCancel) {
+        throw new UnsupportedOperationException("promptAutoInstall");
     }
 }

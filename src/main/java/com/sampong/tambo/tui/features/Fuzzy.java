@@ -33,28 +33,39 @@ public final class Fuzzy {
         }
         String q = query.toLowerCase(Locale.ROOT);
         String c = candidate.toLowerCase(Locale.ROOT);
+        int score = subsequenceScore(q, c);
+        if (score < 0) {
+            return -1;
+        }
+        // Mild penalty for long candidates so tight matches float to the top.
+        return Math.max(1, score - (c.length() - q.length()) / 4);
+    }
 
+    /**
+     * Walks {@code c} looking for the characters of {@code q} in order. Returns the raw score of
+     * the match, or {@code -1} when {@code q} is not a subsequence of {@code c}.
+     */
+    private static int subsequenceScore(String q, String c) {
         int qi = 0;
         int score = 0;
         int streak = 0;
         for (int ci = 0; ci < c.length() && qi < q.length(); ci++) {
-            if (c.charAt(ci) == q.charAt(qi)) {
-                streak++;
-                score += 1 + streak;                       // reward consecutive runs
-                if (ci == 0 || isSeparator(c.charAt(ci - 1))) {
-                    score += 4;                            // reward word-boundary hits
-                }
-                qi++;
-            } else {
+            if (c.charAt(ci) != q.charAt(qi)) {
                 streak = 0;
+                continue;
             }
+            streak++;
+            score += 1 + streak;                           // reward consecutive runs
+            if (startsWord(c, ci)) {
+                score += 4;                                // reward word-boundary hits
+            }
+            qi++;
         }
-        if (qi < q.length()) {
-            return -1;
-        }
-        // Mild penalty for long candidates so tight matches float to the top.
-        score -= (c.length() - q.length()) / 4;
-        return Math.max(1, score);
+        return qi < q.length() ? -1 : score;
+    }
+
+    private static boolean startsWord(String c, int i) {
+        return i == 0 || isSeparator(c.charAt(i - 1));
     }
 
     private static boolean isSeparator(char ch) {

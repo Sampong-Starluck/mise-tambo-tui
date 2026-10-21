@@ -20,6 +20,7 @@ import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.mise.ShellActivationService.ActivationOutcome;
 import com.sampong.tambo.tui.commands.CommandLineCompleter;
 import com.sampong.tambo.tui.components.AddPluginModal;
+import com.sampong.tambo.tui.components.AutoInstallModal;
 import com.sampong.tambo.tui.components.BatchConfirmModal;
 import com.sampong.tambo.tui.components.CommandLineBar;
 import com.sampong.tambo.tui.components.CommandPalette;
@@ -94,7 +95,8 @@ public final class ScreenHarness implements UiContext {
                 new DetailPanel(this, sidePanels, toolsPanel, tasksPanel, envPanel, versionsPanel),
                 new LogPanel(this), sidePanels, new RegistryModal(this), new ConfigEditorModal(this),
                 new ConfirmModal(this), new BatchConfirmModal(this), new TaskArgsModal(this),
-                new AddPluginModal(this), new HelpOverlay(this, () -> this.height, () -> this.width),
+                new AddPluginModal(this), new AutoInstallModal(this),
+                new HelpOverlay(this, () -> this.height, () -> this.width),
                 new SelectBackendModal(), new SwitchBackendModal(this), new CommandPalette(this, commandLine::open),
                 new LeaderMenu(this), commandLine,
                 new JobsView(this, state.jobs(), actions::cancelJob,

@@ -146,6 +146,11 @@ public class MiseSdkBackend implements SdkVersionBackend {
     }
 
     @Override
+    public CliResult installAll(Consumer<String> onLine, String cancelKey) {
+        return tools.installAll(onLine, cancelKey);
+    }
+
+    @Override
     public CliResult uninstall(String sdkAtVersion) {
         return tools.uninstall(sdkAtVersion);
     }
@@ -166,13 +171,13 @@ public class MiseSdkBackend implements SdkVersionBackend {
     }
 
     @Override
-    public CliResult upgrade(String sdk, Consumer<String> onLine, String cancelKey) {
-        return tools.upgrade(sdk, onLine, cancelKey);
+    public CliResult pin(String sdkAtVersion, boolean global) {
+        return tools.pin(sdkAtVersion, global);
     }
 
     @Override
-    public CliResult installAll(Consumer<String> onLine, String cancelKey) {
-        return tools.exec(List.of("install"), onLine, cancelKey);
+    public CliResult upgrade(String sdk, Consumer<String> onLine, String cancelKey) {
+        return tools.upgrade(sdk, onLine, cancelKey);
     }
 
     @Override

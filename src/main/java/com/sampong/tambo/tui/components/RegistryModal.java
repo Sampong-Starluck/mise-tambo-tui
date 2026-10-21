@@ -64,6 +64,8 @@ public final class RegistryModal implements Modal {
 
     private static final int VISIBLE_ROWS = 12;
     private static final int WIDTH = 78;
+    /** Columns the dialog's border and padding leave for text. */
+    private static final int TEXT_WIDTH = WIDTH - 4;
 
     /** The wizard's steps, in order. */
     public enum Step {
@@ -305,24 +307,29 @@ public final class RegistryModal implements Modal {
                 ? "type to fuzzy find an added plugin"
                 : "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
-        if (scopedToAdded()) {
-            if (addedSdks().isEmpty()) {
-                content.add(text("No plugins added yet — press p to add one from the catalog").dim());
-            } else if (matches.isEmpty()) {
-                content.add(text("No plugin matches \"" + query + "\"").dim());
-            } else {
-                addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
-            }
-        } else if (ctx.state().catalog().isEmpty()) {
-            Lazy<List<CatalogEntry>> catalog = ctx.state().catalogLazy();
-            content.add(text(catalog.everLoaded() || catalog.failed()
-                    ? "Catalog unavailable"
-                    : "Loading catalog…").dim());
-        } else if (matches.isEmpty()) {
-            content.add(text("No SDK matches \"" + query + "\"").dim());
+        String emptyMessage = emptyToolListMessage(query, matches);
+        if (emptyMessage != null) {
+            addWrapped(content, emptyMessage);
         } else {
             addWindowedRows(content, matches.size(), i -> toolRow(matches, i));
+            // The rows cut descriptions to fit; the highlighted tool's is worth reading whole.
+            addWrapped(content, Ui.nullToDash(matches.get(index).description()));
         }
+    }
+
+    /** Why the tool list has nothing to show, or null when it does. */
+    private @Nullable String emptyToolListMessage(String query, List<CatalogEntry> matches) {
+        if (scopedToAdded()) {
+            if (addedSdks().isEmpty()) {
+                return "No plugins added yet — press p to add one from the catalog";
+            }
+            return matches.isEmpty() ? "No plugin matches \"" + query + "\"" : null;
+        }
+        if (ctx.state().catalog().isEmpty()) {
+            Lazy<List<CatalogEntry>> catalog = ctx.state().catalogLazy();
+            return catalog.everLoaded() || catalog.failed() ? "Catalog unavailable" : "Loading catalog…";
+        }
+        return matches.isEmpty() ? "No SDK matches \"" + query + "\"" : null;
     }
 
     private Element toolRow(List<CatalogEntry> matches, int i) {
@@ -345,9 +352,9 @@ public final class RegistryModal implements Modal {
         content.add(searchInputRow("Search", "type to fuzzy find a version"));
         content.add(text(""));
         if (versionsLoading) {
-            content.add(text("Fetching versions of " + toolName + " from " + ctx.backend().name() + "…").dim());
+            addWrapped(content, "Fetching versions of " + toolName + " from " + ctx.backend().name() + "…");
         } else if (matches.isEmpty()) {
-            content.add(text("No version matches \"" + query + "\"").dim());
+            addWrapped(content, "No version matches \"" + query + "\"");
         } else {
             addWindowedRows(content, matches.size(), i -> {
                 SdkRelease r = matches.get(i);
@@ -423,6 +430,13 @@ public final class RegistryModal implements Modal {
                         .focusable(true)
                         .onKeyEvent(this::handleKey)
         );
+    }
+
+    /** Dimmed free text, word-wrapped to the dialog — one element per line. */
+    private static void addWrapped(List<Element> content, String text) {
+        for (String line : Ui.wordWrap(text, TEXT_WIDTH)) {
+            content.add(text(line).dim());
+        }
     }
 
     /** Renders a window of VISIBLE_ROWS rows that follows the selection. */
@@ -501,14 +515,9 @@ public final class RegistryModal implements Modal {
         int total = step == Step.TOOL
                 ? fuzzySdks(search.text()).size()
                 : matchingReleases(search.text()).size();
-        if (event.code() == KeyCode.UP) {
-            index = Ui.clamp(index - 1, total);
-        } else if (event.code() == KeyCode.DOWN) {
-            index = Ui.clamp(index + 1, total);
-        } else if (event.code() == KeyCode.PAGE_UP) {
-            index = Ui.clamp(index - VISIBLE_ROWS, total);
-        } else if (event.code() == KeyCode.PAGE_DOWN) {
-            index = Ui.clamp(index + VISIBLE_ROWS, total);
+        int move = Ui.listStep(event, VISIBLE_ROWS);
+        if (move != 0) {
+            index = Ui.clamp(index + move, total);
         }
         // Swallow everything else (Tab, stray chars with modifiers, …) — the wizard is modal.
         return EventResult.HANDLED;

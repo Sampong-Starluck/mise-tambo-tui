@@ -489,6 +489,14 @@ public final class HelpOverlay {
         doc.key("a", plugins
                 ? "Add SDK — install another version of a plugin you already have"
                 : "Add SDK — fuzzy-find the mise registry");
+        doc.key("I", "Auto-install — read " + configFile + " and make the project match it. "
+                + "Tools it declares that are already installed are pinned; ones that are "
+                + "missing are installed. Where a version is installed that differs from the "
+                + "config only within the same major release (25.0.3 on disk, 25.0.4 in the "
+                + "config), it asks per tool whether to keep what you have or download what the "
+                + "config says. Offline, nothing is downloaded: for each tool whose config "
+                + "version is missing it offers the versions already installed, closest first, "
+                + "and pins the one you pick.");
         doc.key("w", "Jobs");
         doc.key("z / Z", "Undo / redo the last config change");
         doc.key("e", "Edit the project " + configFile + " in-app");
@@ -514,8 +522,7 @@ public final class HelpOverlay {
         doc.key("Up/Down, j/k", "Move the selection / scroll one line");
         doc.key("PgUp / PgDn", "Page the focused list by ten rows");
         doc.key("Home / End", "Jump to the first / last entry");
-        doc.key("Mouse", "Click to focus, wheel to scroll. The command log also takes horizontal "
-                + "wheel / trackpad swipes");
+        doc.key("Mouse", "Click to focus, wheel to scroll");
 
         doc.section("LAYOUT");
         doc.note("A stack of numbered panels down the left, all on screen at once, and one big "
@@ -538,6 +545,10 @@ public final class HelpOverlay {
         }
         doc.note("Config editor (e): Ctrl+S saves and refreshes so " + tool + " picks the "
                 + "change up; Esc closes, asking once first if there are unsaved changes.");
+        doc.note("Auto-install questions (I): k keeps the version already installed and pins it "
+                + "to this project, d downloads the one " + configFile + " asks for, s skips that "
+                + "tool. One question per tool, then everything runs at once; Esc abandons the "
+                + "whole run.");
         doc.note("Confirmations: y or Enter to go ahead, n or Esc to back out.");
         doc.note("Backend picker (Space then B): Up/Down then Enter applies and persists the choice; Esc cancels.");
         if (tasks) {
@@ -549,6 +560,8 @@ public final class HelpOverlay {
                 + configFile + " in the current directory");
         doc.flag("--offline", "Installed tools only — blocks install, use, "
                 + (upgrade ? "upgrade, self-update" : "self-update") + " and Add SDK, all of which need the network");
+        doc.flag("--auto-install", "Run the I flow once the session is up, instead of waiting "
+                + "for the key");
         doc.flag("--mouse", "Mouse capture — already on by default in tambo");
         doc.flag("--[no-]alt-screen", "Render on the alternate screen (default) or inline");
         doc.flag("--show-cursor", "Leave the terminal cursor visible");
@@ -634,7 +647,7 @@ public final class HelpOverlay {
             case LOG -> {
                 doc.note("Every " + tool + " command this app runs, echoed the way lazygit echoes git.");
                 doc.key("↑ / ↓", "Scroll; PgUp / PgDn page; Home jumps to the oldest entry");
-                doc.key("← / →", "Pan long lines — streamed build output usually needs it");
+                doc.note("Long lines wrap to the panel's width, so nothing is cut off at the edge.");
                 doc.key("End", "Resume following the newest entry");
             }
             case JOBS -> {

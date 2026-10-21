@@ -75,7 +75,7 @@ public final class WindowsConsoleMouse {
             Kernel32 k32 = new Kernel32(arena);
             MemorySegment handle = k32.stdInputHandle();
             if (handle != null) {
-                k32.setConsoleMode.invoke(handle, previousMode.intValue());
+                k32.setConsoleMode.invoke(handle, previousMode);
             }
         } catch (Throwable t) {
             log.debug("Failed to restore previous console mode: {}", t.getMessage());

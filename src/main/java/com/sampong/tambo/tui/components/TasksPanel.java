@@ -85,13 +85,7 @@ public final class TasksPanel {
 
         List<Row> rows = new ArrayList<>();
         for (ProjectTask task : items) {
-            boolean busy = ctx.state().isBusy("task:" + task.name());
-            rows.add(Row.from(
-                    Cell.from((busy ? Ui.spinner() : "▷") + " " + task.name())
-                            .style(Style.create().fg(busy ? Color.YELLOW : Color.GREEN)),
-                    Cell.from(busy ? RUNNING_TEXT : Ui.nullToDash(task.description()))
-                            .style(Style.create().fg(busy ? Color.YELLOW : Color.DARK_GRAY))
-            ));
+            rows.add(taskRow(task));
         }
 
         TableElement tableElement = table()
@@ -122,6 +116,18 @@ public final class TasksPanel {
             block.bottomTitle(position).bottomTitleAlignment(Alignment.RIGHT);
         }
         return block;
+    }
+
+    /** One table row; a running task swaps its description for a spinner and a status. */
+    private Row taskRow(ProjectTask task) {
+        if (ctx.state().isBusy("task:" + task.name())) {
+            return Row.from(
+                    Cell.from(Ui.spinner() + " " + task.name()).style(Style.create().fg(Color.YELLOW)),
+                    Cell.from(RUNNING_TEXT).style(Style.create().fg(Color.YELLOW)));
+        }
+        return Row.from(
+                Cell.from("▷ " + task.name()).style(Style.create().fg(Color.GREEN)),
+                Cell.from(Ui.nullToDash(task.description())).style(Style.create().fg(Color.DARK_GRAY)));
     }
 
     private String countLabel(int total, int shown) {

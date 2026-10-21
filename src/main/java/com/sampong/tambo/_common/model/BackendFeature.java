@@ -33,6 +33,12 @@ public enum BackendFeature {
     GLOBAL_SCOPE,
     /** Re-parsing the active config to surface a syntax error. mise only. */
     CONFIG_VALIDATE,
+    /**
+     * Installing everything the project config declares in a single command
+     * ({@code mise install}). mise only: vfox has no bulk form, so the auto-install flow
+     * installs its tools one at a time there instead.
+     */
+    BULK_INSTALL,
     /** A user-level config file the app can open in its own editor. mise only. */
     GLOBAL_CONFIG,
     /**
@@ -42,8 +48,6 @@ public enum BackendFeature {
      * what decides whether the version browser offers a project/global choice at all.
      */
     PIN_ON_INSTALL,
-    /** Installing every tool the active config lists, in one command. mise only. */
-    INSTALL_ALL,
     /** Clearing the backend's download cache. mise only. */
     CACHE_CLEAR;
 
@@ -65,9 +69,9 @@ public enum BackendFeature {
             case PLUGIN_REGISTRY -> "register plugins separately";
             case GLOBAL_SCOPE -> "pin a version globally";
             case CONFIG_VALIDATE -> "re-check the config for errors";
+            case BULK_INSTALL -> "install everything the project config declares at once";
             case GLOBAL_CONFIG -> "edit a user-level config";
             case PIN_ON_INSTALL -> "install and pin in one step";
-            case INSTALL_ALL -> "install everything in the config";
             case CACHE_CLEAR -> "clear its download cache";
         };
     }

@@ -375,6 +375,12 @@ class BackendActionsTest {
         }
 
         @Override
+        public CliResult pin(String sdkAtVersion, boolean global) {
+            calls.add("pin " + sdkAtVersion);
+            return result;
+        }
+
+        @Override
         public CliResult upgrade(String sdk, Consumer<String> onLine, String cancelKey) {
             return replay("upgrade " + sdk, onLine);
         }

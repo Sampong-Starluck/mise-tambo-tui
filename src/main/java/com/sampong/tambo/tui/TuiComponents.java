@@ -3,6 +3,7 @@ package com.sampong.tambo.tui;
 import java.util.List;
 
 import com.sampong.tambo.tui.components.AddPluginModal;
+import com.sampong.tambo.tui.components.AutoInstallModal;
 import com.sampong.tambo.tui.components.BatchConfirmModal;
 import com.sampong.tambo.tui.components.CommandLineBar;
 import com.sampong.tambo.tui.components.CommandPalette;
@@ -47,6 +48,7 @@ public record TuiComponents(
         BatchConfirmModal batchConfirm,
         TaskArgsModal taskArgsModal,
         AddPluginModal addPluginModal,
+        AutoInstallModal autoInstallModal,
         HelpOverlay helpOverlay,
         SelectBackendModal selectBackendModal,
         SwitchBackendModal switchBackendModal,
@@ -63,6 +65,7 @@ public record TuiComponents(
      */
     public List<Modal> modals() {
         return List.of(registryModal, configEditor, confirmModal, batchConfirm, taskArgsModal, addPluginModal,
+                autoInstallModal,
                 selectBackendModal, switchBackendModal, palette, leaderMenu, commandLine, jobsView, menuBar);
     }
 }

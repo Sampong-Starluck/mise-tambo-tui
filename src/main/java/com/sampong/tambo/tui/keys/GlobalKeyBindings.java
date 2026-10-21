@@ -126,6 +126,11 @@ public final class GlobalKeyBindings {
             ui.batchConfirm().handleKey(key);
             return EventResult.HANDLED;
         }
+        if (ui.autoInstallModal().isOpen()) {
+            // One question per tool, answered by single letters; no input of its own.
+            ui.autoInstallModal().handleKey(key);
+            return EventResult.HANDLED;
+        }
         if (ui.leaderMenu().isOpen()) {
             ui.leaderMenu().handleKey(key);
             return EventResult.HANDLED;
@@ -223,6 +228,11 @@ public final class GlobalKeyBindings {
         }
         if (key.isChar('A')) {
             ctx.actions().activateShell();
+            return EventResult.HANDLED;
+        }
+        if (key.isChar('I')) {
+            // Upper-case: lower-case 'i' is the Tools panel's per-row install.
+            ctx.actions().autoInstall(ctx::promptAutoInstall);
             return EventResult.HANDLED;
         }
         if (key.isChar('e')) {

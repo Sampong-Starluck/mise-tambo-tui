@@ -141,6 +141,11 @@ public final class DemoBackend implements SdkVersionBackend {
     }
 
     @Override
+    public CliResult pin(String sdkAtVersion, boolean global) {
+        return record("pin " + (global ? "-g " : "") + sdkAtVersion);
+    }
+
+    @Override
     public CliResult upgrade(String sdk, Consumer<String> onLine, String cancelKey) {
         return record("upgrade " + sdk);
     }

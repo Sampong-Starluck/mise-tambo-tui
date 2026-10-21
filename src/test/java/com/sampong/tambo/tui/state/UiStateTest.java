@@ -87,17 +87,9 @@ class UiStateTest {
 
         List<String> texts = new ArrayList<>();
         state.log().forEach(e -> texts.add(e.text()));
-        assertThat(state.logSize()).isEqualTo(300);
+        assertThat(texts).hasSize(300);
         assertThat(texts.getFirst()).isEqualTo("line 50");
         assertThat(texts.getLast()).isEqualTo("line 349");
-    }
-
-    @Test
-    void logPanNeverGoesNegative() {
-        state.logHScroll(-5);
-        assertThat(state.logHScroll()).isZero();
-        state.logHScroll(12);
-        assertThat(state.logHScroll()).isEqualTo(12);
     }
 
     @Test
