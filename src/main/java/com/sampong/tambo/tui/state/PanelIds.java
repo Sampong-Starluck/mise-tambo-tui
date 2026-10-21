@@ -8,7 +8,6 @@ public final class PanelIds {
     public static final String ENV = "panel-env";
     public static final String TASKS = "panel-tasks";
     public static final String LOG = "panel-log";
-    public static final String ADVANCED = "panel-advanced";
     public static final String TOOLS_FILTER = "panel-tools-filter";
     public static final String ENV_FILTER = "panel-env-filter";
     public static final String TASKS_FILTER = "panel-tasks-filter";
@@ -16,6 +15,13 @@ public final class PanelIds {
     public static final String CONFIG_EDITOR = "config-editor";
     public static final String TASK_ARGS_INPUT = "task-args-input";
     public static final String ADD_PLUGIN_INPUT = "add-plugin-input";
+    /** The Versions column between Tools and the detail pane. */
+    public static final String VERSIONS = "panel-versions";
+    public static final String VERSIONS_FILTER = "panel-versions-filter";
+    public static final String PALETTE_INPUT = "palette-input";
+    public static final String COMMAND_LINE_INPUT = "command-line-input";
+    /** The full-screen jobs view opened with {@code w}. */
+    public static final String JOBS = "panel-jobs";
 
     private PanelIds() {
     }

@@ -71,6 +71,7 @@ public class CliProcessRunner {
             return new CliResult(-1, "", "Failed to launch " + binary + ": " + e.getMessage());
         }
 
+        cancelRegistry.track(process);
         try {
             process.getOutputStream().close();
 
@@ -93,13 +94,19 @@ public class CliProcessRunner {
             Thread.currentThread().interrupt();
             destroyTree(process);
             return new CliResult(-1, "", "Interrupted while running " + binary + " " + String.join(" ", args));
+        } finally {
+            cancelRegistry.untrack(process);
         }
     }
 
     /**
      * Runs the CLI with stdout and stderr merged, invoking {@code onLine} for every
      * line as it is produced so callers can render live progress. Lines are stripped of
-     * ANSI escapes and carriage returns before delivery. {@code onLine} is called on a
+     * ANSI escapes before delivery. A bare {@code \r} ends a line just as {@code \n} does
+     * ({@link BufferedReader#readLine()}'s rule), so a progress bar redrawn in place arrives
+     * as one line per frame — which is what lets a backend's
+     * {@link com.sampong.tambo._common.service.ProgressParser} follow it live, rather than
+     * seeing nothing until the bar finishes. {@code onLine} is called on a
      * background reader thread — callers must marshal to their own thread if needed.
      * The returned {@link CliResult} carries the full combined output as stdout.
      */
@@ -128,6 +135,8 @@ public class CliProcessRunner {
 
         if (cancelKey != null) {
             cancelRegistry.register(cancelKey, process);
+        } else {
+            cancelRegistry.track(process);
         }
 
         StringBuilder captured = new StringBuilder();
@@ -168,6 +177,8 @@ public class CliProcessRunner {
         } finally {
             if (cancelKey != null) {
                 cancelRegistry.deregister(cancelKey);
+            } else {
+                cancelRegistry.untrack(process);
             }
         }
     }
@@ -231,11 +242,12 @@ public class CliProcessRunner {
         }
     }
 
-    /** Strips ANSI escapes and keeps only the final state of {@code \r}-overwritten progress lines. */
+    /**
+     * Strips ANSI escapes and trailing whitespace. No {@code \r} handling is needed:
+     * {@code readLine} has already split on it.
+     */
     private static String cleanLine(String line) {
-        String noAnsi = ANSI.matcher(line).replaceAll("");
-        int lastCr = noAnsi.lastIndexOf('\r');
-        return (lastCr >= 0 ? noAnsi.substring(lastCr + 1) : noAnsi).stripTrailing();
+        return ANSI.matcher(line).replaceAll("").stripTrailing();
     }
 
     private static String capturedText(StringBuilder captured) {

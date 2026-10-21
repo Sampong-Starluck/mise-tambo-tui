@@ -1,6 +1,9 @@
 package com.sampong.tambo.tui.state;
 
+import java.util.List;
+
 import com.sampong.tambo._common.model.BackendFeature;
+import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.tui.MiseTuiApp;
 import com.sampong.tambo.tui.features.BackendActions;
@@ -45,8 +48,8 @@ public interface UiContext {
 
     void clearFocus();
 
-    /** True while no modal is open (panels leave the focus chain while one is). */
-    boolean modalOpen();
+    /** True while no modal is open — panels are focusable only then, and leave the focus chain while one is. */
+    boolean noModalOpen();
 
     /**
      * Opens the shared yes/no confirmation dialog; {@code onConfirm} runs on the
@@ -68,4 +71,23 @@ public interface UiContext {
      * has to mean "pick a version first".
      */
     void promptVersionFor(String tool);
+
+    /**
+     * Upgrades {@code sdks} after a confirmation that lists each one and defaults to No. Several
+     * tools or one, the same dialog: an upgrade can be a major-version jump, and that is worth
+     * one look before it rewrites the config.
+     */
+    default void requestUpgrade(List<SdkVersion> sdks) {
+        throw new UnsupportedOperationException("requestUpgrade");
+    }
+
+    /** Ends the session — {@code q}, F10, and Quit in the palette. */
+    default void quit() {
+        throw new UnsupportedOperationException("quit");
+    }
+
+    /** Uninstalls {@code sdks} after a confirmation that lists each one and defaults to No. */
+    default void requestUninstall(List<SdkVersion> sdks) {
+        throw new UnsupportedOperationException("requestUninstall");
+    }
 }

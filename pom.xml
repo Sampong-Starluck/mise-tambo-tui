@@ -16,12 +16,11 @@
 
     <properties>
         <java.version>25</java.version>
-        <tamboui.version>0.5.0</tamboui.version>
+        <tamboui.version>0.6.0</tamboui.version>
         <picocli.version>4.7.7</picocli.version>
         <!-- Pinned to the version tamboui-jline3-backend resolves to, so swapping the uber
              jar for individual modules does not silently change the JLine version. -->
         <jline.version>3.25.1</jline.version>
-        <maven.test.skip>true</maven.test.skip>
     </properties>
 
     <!--
@@ -116,9 +115,11 @@
             <artifactId>tamboui-aesh-backend</artifactId>
         </dependency>
 
-        <!-- JSON parsing for `mise ... -J` output -->
+        <!-- JSON parsing for `mise ... -J` output. Jackson 3 (tools.jackson), the line Spring
+             Boot 4 manages as primary; its Jackson 2 support is deprecated. Annotations stay in
+             com.fasterxml.jackson.annotation, which Jackson 3 shares with 2.x. -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
+            <groupId>tools.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
@@ -127,7 +128,7 @@
         <dependency>
             <groupId>org.jspecify</groupId>
             <artifactId>jspecify</artifactId>
-            <version>1.0.0</version>
+            <version>1.0.1</version>
         </dependency>
 
         <!-- Command-line parsing for the app's own flags (backend, offline,
@@ -211,22 +212,6 @@
                     </excludes>
                 </configuration>
             </plugin>
-            <!-- Maven's own default-test binding sets JUnit-Platform uid-tracking via the
-                 deprecated systemProperties element; that config comes from the lifecycle's
-                 default bindings, not POM inheritance, so overriding it here only merges
-                 alongside the original instead of replacing it. maven.test.skip already
-                 means this execution never runs anything, so disable it outright instead
-                 of fighting the merge — this drops the warning along with it. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>default-test</id>
-                        <phase>none</phase>
-                    </execution>
-                </executions>
-            </plugin>
             <!-- GraalVM native image: build with `mvnw -Pnative native:compile` (the
                  parent's `native` profile binds process-aot and reachability metadata).
                  Requires GraalVM as JAVA_HOME and the MSVC C++ toolchain on Windows.
@@ -266,6 +251,21 @@
                              cap gives predictable memory use instead of the GC growing the
                              heap on demand. Bump this if you manage a very large registry. -->
                         <buildArg>-R:MaxHeapSize=128m</buildArg>
+                        <!-- org.aesh:terminal-tty (pulled in by the aesh backend) still ships its
+                             one dynamic proxy, sun.misc.SignalHandler, as a legacy
+                             proxy-config.json, which makes native-image warn that
+                             DynamicProxyConfigurationResources is deprecated. Ignore that one
+                             file; the same proxy is declared in the current format in this
+                             project's own META-INF/native-image/.../reachability-metadata.json,
+                             so aesh's resize-signal handling keeps working. Drop both once aesh
+                             ships reachability-metadata.json itself. Three separate buildArgs:
+                             the option takes two values, and each must stay one argument. The
+                             patterns use [.] rather than \. because on Windows the plugin doubles
+                             every backslash in the args file it hands native-image, which turns
+                             \. into "a literal backslash" and the pattern silently never matches. -->
+                        <buildArg>--exclude-config</buildArg>
+                        <buildArg>.*terminal-tty.*[.]jar</buildArg>
+                        <buildArg>META-INF/native-image/org[.]aesh/terminal-tty/proxy-config[.]json</buildArg>
                     </buildArgs>
                 </configuration>
             </plugin>
@@ -273,6 +273,18 @@
     </build>
 
     <profiles>
+        <!-- Merges with the parent's `native` profile (same id, so -Pnative activates both).
+             The unit tests run in the ordinary JVM build (`mvnw test` / `package`); a native
+             build skips them, along with the test-AOT processing the parent's profile would
+             otherwise run over them, so deploy-tambo.sh and the mise compile-native tasks
+             build exactly as they did before tests existed. -->
+        <profile>
+            <id>native</id>
+            <properties>
+                <maven.test.skip>true</maven.test.skip>
+            </properties>
+        </profile>
+
         <!-- Profile-guided optimization, step 1: build an instrumented binary that
              records which code paths actually run. Usage:
                mvnw -Pnative,pgo-instrument native:compile

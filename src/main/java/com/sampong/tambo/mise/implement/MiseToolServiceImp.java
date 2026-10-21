@@ -91,4 +91,10 @@ public class MiseToolServiceImp implements MiseToolService {
         }
         return cli.runStreaming(command, Duration.ofMinutes(15), onLine, cancelKey);
     }
+
+    @Override
+    public CliResult exec(@NonNull List<String> args, @NonNull Consumer<String> onLine,
+                          @NonNull String cancelKey) {
+        return cli.runStreaming(args, Duration.ofMinutes(15), onLine, cancelKey);
+    }
 }

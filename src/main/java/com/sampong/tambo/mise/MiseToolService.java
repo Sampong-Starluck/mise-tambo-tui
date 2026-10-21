@@ -1,5 +1,6 @@
 package com.sampong.tambo.mise;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 import com.sampong.tambo._common.model.CliResult;
@@ -48,4 +49,7 @@ public interface MiseToolService {
      * is non-blank so the extra tokens are forwarded to the task.
      */
     CliResult runTask(String taskName, String args, Consumer<String> onLine, String cancelKey);
+
+    /** Runs {@code mise <args>} verbatim, streaming merged output — the {@code :} command line. */
+    CliResult exec(List<String> args, Consumer<String> onLine, String cancelKey);
 }

@@ -35,7 +35,7 @@ import lombok.RequiredArgsConstructor;
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
 @RequiredArgsConstructor
-public final class ConfigEditorModal {
+public final class ConfigEditorModal implements Modal {
 
     private static final int EDITOR_ROWS = 20;
     private static final int WIDTH = 84;

@@ -1,5 +1,6 @@
 package com.sampong.tambo.tui.components;
 
+import static dev.tamboui.toolkit.Toolkit.column;
 import static dev.tamboui.toolkit.Toolkit.dialog;
 import static dev.tamboui.toolkit.Toolkit.length;
 import static dev.tamboui.toolkit.Toolkit.row;
@@ -7,7 +8,11 @@ import static dev.tamboui.toolkit.Toolkit.spacer;
 import static dev.tamboui.toolkit.Toolkit.text;
 import static dev.tamboui.toolkit.Toolkit.textInput;
 
-import java.util.*;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 
@@ -27,33 +32,77 @@ import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.PanelIds;
 import com.sampong.tambo.tui.state.UiContext;
 
-import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 
+import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
 /**
- * The "Add SDK" modal: step 1 fuzzy-finds a tool by typing into a real input box, step 2
- * fuzzy-finds the version the same way. Esc steps back.
+ * The "Add SDK" wizard (Charm huh's step-by-step form): Tool → Version → Where → Confirm, with a
+ * strip across the top showing what is chosen and what is left. Tool and Version fuzzy-find by
+ * typing into a real input box; Where is a short list of the places the choice can land, each
+ * naming the file it writes; Confirm shows the exact command before anything runs.
  * <p>
- * Both steps are the same for either backend; what differs is declared, not branched on.
- * A backend with its own plugin registry (BackendFeature.PLUGIN_REGISTRY) already has a
- * separate flow for registering plugins, so step 1 here is scoped to SDKs already added and
- * this modal means "install another version of one you have"; a backend without one browses
- * its whole catalog, since that is the only way in. Step 2 then either installs and pins in
- * one go (BackendFeature.PIN_ON_INSTALL, with Ctrl+G choosing the scope) or installs only,
- * leaving pinning to the Tools panel.
+ * The step this replaced was a single Ctrl+G toggle on the version list. That made the scope the
+ * least visible part of the flow, when it is the part with consequences: "this project" and
+ * "everywhere" write different files, and "just install" writes none. Spelling the three out as
+ * choices — and the command as text — means nobody has to know mise's flags to pick right.
  * <p>
- * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
+ * Both backends get all three choices. What differs is declared, not branched on: a backend with
+ * its own plugin registry ({@link BackendFeature#PLUGIN_REGISTRY}) already has a separate flow
+ * for registering plugins, so the Tool step lists SDKs already added; a backend without one
+ * browses its whole catalog. A backend that cannot install and pin in one command
+ * ({@link BackendFeature#PIN_ON_INSTALL}) previews the two commands it will run instead of one.
+ * <p>
+ * {@code Shift+Tab} steps back, {@code Esc} cancels. Owns all of its own state — the rest of the
+ * app only asks {@link #isOpen()}, and routes keys here via {@link #handleKey} while
+ * {@link #ownsKeyboard()} (the two steps with no input box to receive them).
  */
 @RequiredArgsConstructor
-public final class RegistryModal {
+public final class RegistryModal implements Modal {
 
     private static final int VISIBLE_ROWS = 12;
-    private static final int WIDTH = 72;
+    private static final int WIDTH = 78;
 
-    private enum Step { TOOL, VERSION }
+    /** The wizard's steps, in order. */
+    public enum Step {
+        TOOL("Tool"), VERSION("Version"), WHERE("Where"), CONFIRM("Confirm");
+
+        private final String label;
+
+        Step(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+
+    /** Where a chosen version lands. */
+    public enum Where {
+        PROJECT("This project", "project"),
+        GLOBAL("Everywhere (global)", "global"),
+        INSTALL_ONLY("Just install it", "install only");
+
+        private final String label;
+        /** The one-word answer the step strip shows once this step is done. */
+        private final String shortLabel;
+
+        Where(String label, String shortLabel) {
+            this.label = label;
+            this.shortLabel = shortLabel;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        public String shortLabel() {
+            return shortLabel;
+        }
+    }
 
     @NonNull
     private final UiContext ctx;
@@ -65,10 +114,23 @@ public final class RegistryModal {
     private String lastQuery = "";
     private int index;
     private @Nullable CatalogEntry tool;
+    private @Nullable String version;
     private List<SdkRelease> releases = List.of();
     private boolean versionsLoading;
-    private boolean installGlobal;
+    /** True when the wizard was opened at the Version step, so Shift+Tab there closes instead. */
+    private boolean startedAtVersion;
+    private Where where = Where.PROJECT;
     private @Nullable String preOpenFocus;
+
+    /** The step on screen. */
+    public Step step() {
+        return step;
+    }
+
+    /** The place the version will land, as chosen so far. */
+    public Where where() {
+        return where;
+    }
 
     public void open() {
         // The catalog (mise's ~200 KB of JSON, or vfox's `available` listing) is fetched here
@@ -79,15 +141,23 @@ public final class RegistryModal {
         ctx.actions().ensureCatalog();
         preOpenFocus = ctx.focusedId();
         open = true;
-        step = Step.TOOL;
-        search.clear();
-        lastQuery = "";
-        index = 0;
+        startedAtVersion = false;
         tool = null;
-        releases = List.of();
-        versionsLoading = false;
-        installGlobal = false;
-        ctx.focus(PanelIds.MODAL_INPUT);
+        version = null;
+        where = Where.PROJECT;
+        enterStep(Step.TOOL);
+    }
+
+    /**
+     * Opens straight at the version step for an already-registered SDK, skipping the
+     * plugin-picking step — the Tools panel's "install" action for a plugin that has no
+     * version installed yet. The entry is synthesised from the name so this works even for a
+     * plugin added by {@code --source} that the catalog has never heard of.
+     */
+    public void openAtVersion(String toolName) {
+        open();
+        startedAtVersion = true;
+        chooseTool(CatalogEntry.of(toolName, null));
     }
 
     public void close() {
@@ -97,27 +167,73 @@ public final class RegistryModal {
         }
     }
 
-    /** The context-sensitive hint line the footer shows while the modal is open. */
+    /**
+     * True on the Where and Confirm steps, which have no input box to receive keys — the global
+     * key handler hands them to {@link #handleKey} instead, the way {@link ConfirmModal} reads
+     * its y/n.
+     */
+    public boolean ownsKeyboard() {
+        return open && (step == Step.WHERE || step == Step.CONFIRM);
+    }
+
+    /** The context-sensitive hint line the footer shows while the wizard is open. */
     public String footerHint() {
-        if (step == Step.TOOL) {
-            return "type to fuzzy find   ↑/↓ select   enter choose " + (scopedToAdded() ? "plugin" : "sdk")
-                    + "   esc close";
-        }
-        return "type to fuzzy find   ↑/↓ select   enter install"
-                + (pinsOnInstall() ? "   ctrl+g local/global" : "") + "   esc back";
+        return switch (step) {
+            case TOOL -> "type to fuzzy find  ↑↓ select  Enter next  Esc cancel";
+            case VERSION -> "type to fuzzy find  ↑↓ select  Enter next  Shift+Tab back  Esc cancel";
+            case WHERE -> "↑↓ choose  Enter next  Shift+Tab back  Esc cancel";
+            case CONFIRM -> "Enter run  Shift+Tab back  Esc cancel";
+        };
     }
 
     /**
-     * True when step 1 lists only SDKs already added rather than the whole catalog — the case
-     * for a backend whose catalog is reached through its own plugin-registry flow instead.
+     * True when the Tool step lists only SDKs already added rather than the whole catalog — the
+     * case for a backend whose catalog is reached through its own plugin-registry flow instead.
      */
     private boolean scopedToAdded() {
         return ctx.supports(BackendFeature.PLUGIN_REGISTRY);
     }
 
-    /** True when choosing a version can pin it as well as install it. */
-    private boolean pinsOnInstall() {
-        return ctx.supports(BackendFeature.PIN_ON_INSTALL);
+    /** The places this backend can put a version, in the order the Where step lists them. */
+    private List<Where> choices() {
+        return ctx.supports(BackendFeature.GLOBAL_SCOPE)
+                ? List.of(Where.PROJECT, Where.GLOBAL, Where.INSTALL_ONLY)
+                : List.of(Where.PROJECT, Where.INSTALL_ONLY);
+    }
+
+    // ==================== Pure helpers (tested directly) ====================
+
+    /**
+     * The command(s) a choice will run, as the preview prints them. A backend whose {@code use}
+     * cannot install (no {@link BackendFeature#PIN_ON_INSTALL}) installs first, then pins — two
+     * commands, and the preview says so rather than pretending it is one.
+     */
+    static List<String> plan(String backend, boolean pinsOnInstall, String toolAtVersion, Where where) {
+        return switch (where) {
+            case INSTALL_ONLY -> List.of(backend + " install " + toolAtVersion);
+            case PROJECT -> pinsOnInstall
+                    ? List.of(backend + " use " + toolAtVersion)
+                    : List.of(backend + " install " + toolAtVersion, backend + " use -p " + toolAtVersion);
+            case GLOBAL -> pinsOnInstall
+                    ? List.of(backend + " use -g " + toolAtVersion)
+                    : List.of(backend + " install " + toolAtVersion, backend + " use -g " + toolAtVersion);
+        };
+    }
+
+    /** What a choice changes on disk, in the words the Where step uses under each option. */
+    static String consequence(Where where, String projectFile, @Nullable Path globalConfig, String backend) {
+        return switch (where) {
+            case PROJECT -> "writes ./" + projectFile + " · only this folder uses it";
+            case GLOBAL -> (globalConfig == null ? "sets " + backend + "'s global default"
+                    : "writes " + home(globalConfig)) + " · default for every folder";
+            case INSTALL_ONLY -> "downloads now, doesn't pin it anywhere";
+        };
+    }
+
+    private static String home(Path path) {
+        String text = path.toString().replace('\\', '/');
+        String home = System.getProperty("user.home", "").replace('\\', '/');
+        return !home.isEmpty() && text.startsWith(home) ? "~" + text.substring(home.length()) : text;
     }
 
     // ==================== Rendering ====================
@@ -130,36 +246,68 @@ public final class RegistryModal {
         }
 
         List<Element> content = new ArrayList<>();
-        if (step == Step.TOOL) {
-            buildToolStep(content, query);
-        } else {
-            buildVersionStep(content, query);
-        }
-
+        content.add(stepStrip());
         content.add(text(""));
-        content.add(text(step == Step.TOOL
-                ? "enter choose " + (scopedToAdded() ? "plugin" : "SDK") + "   esc close"
-                : "enter install" + (pinsOnInstall() ? "   ctrl+g toggle local/global" : "") + "   esc back")
-                .dim());
+        switch (step) {
+            case TOOL -> buildToolStep(content, query);
+            case VERSION -> buildVersionStep(content, query);
+            case WHERE -> buildWhereStep(content);
+            case CONFIRM -> buildConfirmStep(content);
+        }
+        content.add(text(""));
+        content.add(row(
+                text(footerHint()).dim(),
+                spacer(),
+                text("step " + (step.ordinal() + 1) + " of " + Step.values().length).dim()));
 
-        String title = scopedToAdded()
-                ? "Add SDK — added plugins (" + addedSdks().size() + ")"
-                : "Add SDK — catalog (" + ctx.state().catalog().size() + ")";
-        return dialog(title, content.toArray(new Element[0]))
+        return dialog("Add SDK", content.toArray(new Element[0]))
                 .rounded().borderColor(Color.CYAN).width(WIDTH);
+    }
+
+    /**
+     * {@code ✓ Tool python ── ✓ Version 3.12.7 ── ● Where ── ○ Confirm}: done steps carry their
+     * answer, so the strip doubles as a summary of what has been chosen so far.
+     */
+    private Element stepStrip() {
+        List<Element> parts = new ArrayList<>();
+        for (Step s : Step.values()) {
+            if (s.ordinal() > 0) {
+                parts.add(text(" ── ").dim());
+            }
+            if (s.ordinal() < step.ordinal()) {
+                String answer = switch (s) {
+                    case TOOL -> tool == null ? "" : " " + tool.name();
+                    case VERSION -> version == null ? "" : " " + version;
+                    case WHERE -> " " + where.shortLabel();
+                    case CONFIRM -> "";
+                };
+                parts.add(text("✓ ").fg(Color.GREEN));
+                parts.add(text(s.label()));
+                parts.add(text(answer).bold());
+            } else if (s == step) {
+                parts.add(text("● " + s.label()).cyan().bold());
+            } else {
+                parts.add(text("○ " + s.label()).dim());
+            }
+        }
+        return row(parts.toArray(new Element[0]));
     }
 
     private void buildToolStep(List<Element> content, String query) {
         List<CatalogEntry> matches = fuzzySdks(query);
         index = Ui.clamp(index, matches.size());
 
-        content.add(searchInputRow("Search SDK", scopedToAdded()
+        String source = scopedToAdded()
+                ? "added plugins (" + addedSdks().size() + ")"
+                : ctx.backend().name() + " catalog (" + ctx.state().catalog().size() + ")";
+        content.add(row(text("Which tool?").bold(), spacer(), text(source).dim()));
+        content.add(searchInputRow("Search", scopedToAdded()
                 ? "type to fuzzy find an added plugin"
                 : "type to fuzzy find, e.g. \"node\" or \"jdk\""));
         content.add(text(""));
         if (scopedToAdded()) {
             if (addedSdks().isEmpty()) {
-                content.add(text("No plugins added yet — press P to add one from the catalog").dim());
+                content.add(text("No plugins added yet — press p to add one from the catalog").dim());
             } else if (matches.isEmpty()) {
                 content.add(text("No plugin matches \"" + query + "\"").dim());
             } else {
@@ -191,29 +339,13 @@ public final class RegistryModal {
     private void buildVersionStep(List<Element> content, String query) {
         List<SdkRelease> matches = matchingReleases(query);
         index = Ui.clamp(index, matches.size());
+        String toolName = tool == null ? "" : tool.name();
 
-        assert tool != null;
-        if (!pinsOnInstall()) {
-            // Selecting a version here only installs it (see confirmVersion) — this backend's
-            // install carries no scope, so there is nothing to toggle.
-            content.add(row(
-                    text("Plugin ").dim(),
-                    text(tool.name()).bold().cyan()
-            ));
-        } else {
-            content.add(row(
-                    text("SDK ").dim(),
-                    text(tool.name()).bold().cyan(),
-                    spacer(),
-                    text("target: ").dim(),
-                    installGlobal ? text("global (ctrl+g)").yellow() : text("this directory (ctrl+g)").green()
-            ));
-        }
-        content.add(searchInputRow("Search version", "type to fuzzy find a version"));
+        content.add(text("Which version of " + toolName + "?").bold());
+        content.add(searchInputRow("Search", "type to fuzzy find a version"));
         content.add(text(""));
         if (versionsLoading) {
-            content.add(text("Fetching versions of " + tool.name() + " from "
-                    + ctx.backend().name() + "…").dim());
+            content.add(text("Fetching versions of " + toolName + " from " + ctx.backend().name() + "…").dim());
         } else if (matches.isEmpty()) {
             content.add(text("No version matches \"" + query + "\"").dim());
         } else {
@@ -231,15 +363,59 @@ public final class RegistryModal {
         }
     }
 
+    private void buildWhereStep(List<Element> content) {
+        content.add(text("Where should " + toolAtVersion().replace('@', ' ') + " apply?").bold());
+        content.add(text(""));
+        for (Where choice : choices()) {
+            boolean sel = choice == where;
+            content.add(row(
+                    sel ? text(" (●) ").cyan().bold() : text(" ( ) ").dim(),
+                    sel ? text(choice.label()).bold().cyan() : text(choice.label()).bold()));
+            content.add(row(text("     "), text(consequence(choice, ctx.backend().projectConfigFileName(),
+                    ctx.backend().globalConfigPath(), ctx.backend().name())).dim()));
+        }
+        content.add(text(""));
+        addPlan(content);
+    }
+
+    private void buildConfirmStep(List<Element> content) {
+        content.add(text("Ready to go").bold());
+        content.add(text(""));
+        content.add(row(text("Tool       ").dim(), text(tool == null ? "" : tool.name()).bold()));
+        content.add(row(text("Version    ").dim(), text(version == null ? "" : version).bold()));
+        content.add(row(text("Where      ").dim(), text(where.label()).bold()));
+        content.add(row(text("           ").dim(), text(consequence(where, ctx.backend().projectConfigFileName(),
+                ctx.backend().globalConfigPath(), ctx.backend().name())).dim()));
+        content.add(text(""));
+        addPlan(content);
+        if (where != Where.INSTALL_ONLY) {
+            content.add(text(""));
+            content.add(text("Afterwards, z puts the config file back the way it was.").dim());
+        }
+    }
+
+    /** The "will run" preview: the exact command(s), so the flags are never a guess. */
+    private void addPlan(List<Element> content) {
+        List<String> commands = plan(ctx.backend().name(), ctx.supports(BackendFeature.PIN_ON_INSTALL),
+                toolAtVersion(), where);
+        for (int i = 0; i < commands.size(); i++) {
+            content.add(row(text(i == 0 ? " will run  " : " then      ").dim(), text("$ " + commands.get(i)).cyan()));
+        }
+    }
+
+    private String toolAtVersion() {
+        return (tool == null ? "" : tool.name()) + "@" + (version == null ? "" : version);
+    }
+
     /** Fuzzy-matches the fetched releases by version string. */
     private List<SdkRelease> matchingReleases(String query) {
         return Fuzzy.filter(query, releases, SdkRelease::version, null);
     }
 
-    /** The typed input box shared by both steps; owns all modal key handling. */
+    /** The typed input box shared by the Tool and Version steps. */
     private Element searchInputRow(String label, String placeholder) {
         return row(
-                text(label + " ").dim().constraint(length(15)),
+                text(label + " ").dim().constraint(length(8)),
                 textInput(search)
                         .placeholder(placeholder)
                         .placeholderColor(Color.DARK_GRAY)
@@ -253,9 +429,11 @@ public final class RegistryModal {
     private void addWindowedRows(List<Element> content, int total, IntFunction<Element> rowAt) {
         int start = Math.max(0, index - VISIBLE_ROWS + 1);
         int end = Math.min(total, start + VISIBLE_ROWS);
+        List<Element> rows = new ArrayList<>();
         for (int i = start; i < end; i++) {
-            content.add(rowAt.apply(i));
+            rows.add(rowAt.apply(i));
         }
+        content.add(column(rows.toArray(new Element[0])));
         int hidden = total - (end - start);
         content.add(hidden > 0 ? text("… " + hidden + " more (keep typing to narrow)").dim() : text(""));
     }
@@ -289,125 +467,135 @@ public final class RegistryModal {
     // ==================== Key handling ====================
 
     /**
-     * Handles the keys the input box itself doesn't consume: list navigation,
-     * Enter (choose/install), Ctrl+G (local/global), and Escape (back/close).
-     * Everything else is swallowed so no global shortcut fires under the modal.
+     * Every key the wizard reacts to: list or choice navigation, Enter (next / run), Shift+Tab
+     * (back) and Esc (cancel). Reached from the input box on the first two steps and from the
+     * global key handler on the last two. Everything else is swallowed so no global shortcut
+     * fires under the wizard — except plain typing, which the input box has already consumed.
      */
-    private EventResult handleKey(KeyEvent event) {
-        int total = step == Step.TOOL
-                ? fuzzySdks(search.text()).size()
-                : matchingReleases(search.text()).size();
-
+    public EventResult handleKey(@NonNull KeyEvent event) {
         if (event.isCancel()) {
-            if (step == Step.VERSION) {
-                backToToolStep();
-            } else {
-                close();
-            }
+            close();
+            return EventResult.HANDLED;
+        }
+        if (event.code() == KeyCode.TAB && event.hasShift()) {
+            back();
             return EventResult.HANDLED;
         }
         if (event.isConfirm()) {
-            confirm();
+            next();
             return EventResult.HANDLED;
         }
+        if (step == Step.WHERE) {
+            List<Where> choices = choices();
+            int at = choices.indexOf(where);
+            if (event.code() == KeyCode.UP || event.isChar('k')) {
+                where = choices.get(Math.max(0, at - 1));
+            } else if (event.code() == KeyCode.DOWN || event.isChar('j')) {
+                where = choices.get(Math.min(choices.size() - 1, at + 1));
+            }
+            return EventResult.HANDLED;
+        }
+        if (step == Step.CONFIRM) {
+            return EventResult.HANDLED;
+        }
+        int total = step == Step.TOOL
+                ? fuzzySdks(search.text()).size()
+                : matchingReleases(search.text()).size();
         if (event.code() == KeyCode.UP) {
             index = Ui.clamp(index - 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.DOWN) {
+        } else if (event.code() == KeyCode.DOWN) {
             index = Ui.clamp(index + 1, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_UP) {
+        } else if (event.code() == KeyCode.PAGE_UP) {
             index = Ui.clamp(index - VISIBLE_ROWS, total);
-            return EventResult.HANDLED;
-        }
-        if (event.code() == KeyCode.PAGE_DOWN) {
+        } else if (event.code() == KeyCode.PAGE_DOWN) {
             index = Ui.clamp(index + VISIBLE_ROWS, total);
-            return EventResult.HANDLED;
         }
-        if (event.hasCtrl() && event.isCharIgnoreCase('g')) {
-            installGlobal = !installGlobal;
-            return EventResult.HANDLED;
-        }
-        // Swallow everything else (Tab, stray chars with modifiers, …) — the modal is modal.
+        // Swallow everything else (Tab, stray chars with modifiers, …) — the wizard is modal.
         return EventResult.HANDLED;
     }
 
-    private void backToToolStep() {
-        step = Step.TOOL;
-        search.clear();
-        lastQuery = "";
-        index = 0;
-        releases = List.of();
-        versionsLoading = false;
-    }
-
-    private void confirm() {
-        if (step == Step.TOOL) {
-            confirmTool();
-        } else {
-            confirmVersion();
+    /** Enter: accept this step's answer and move on; on Confirm, run it. */
+    private void next() {
+        switch (step) {
+            case TOOL -> {
+                List<CatalogEntry> matches = fuzzySdks(search.text());
+                if (!matches.isEmpty()) {
+                    chooseTool(matches.get(Ui.clamp(index, matches.size())));
+                }
+            }
+            case VERSION -> {
+                List<SdkRelease> matches = matchingReleases(search.text());
+                if (!versionsLoading && !matches.isEmpty()) {
+                    version = matches.get(Ui.clamp(index, matches.size())).version();
+                    enterStep(Step.WHERE);
+                }
+            }
+            case WHERE -> enterStep(Step.CONFIRM);
+            case CONFIRM -> run();
         }
     }
 
-    private void confirmTool() {
-        List<CatalogEntry> matches = fuzzySdks(search.text());
-        if (matches.isEmpty()) {
-            return;
+    /** Shift+Tab: one step back, keeping what was chosen there so it is not typed twice. */
+    private void back() {
+        switch (step) {
+            case TOOL -> close();
+            case VERSION -> {
+                if (startedAtVersion) {
+                    close();
+                } else {
+                    enterStep(Step.TOOL);
+                }
+            }
+            case WHERE -> enterStep(Step.VERSION);
+            case CONFIRM -> enterStep(Step.WHERE);
         }
-        enterVersionStep(matches.get(Ui.clamp(index, matches.size())));
     }
 
-    /**
-     * Opens straight at the version step for an already-registered SDK, skipping the
-     * plugin-picking step — the Tools panel's "install" action for a plugin that has no
-     * version installed yet. The catalog is still fetched, since {@link #build()} reads it,
-     * but the entry is synthesised from the name so this works even for a plugin added by
-     * {@code --source} that the catalog has never heard of.
-     */
-    public void openAtVersion(String toolName) {
-        open();
-        enterVersionStep(CatalogEntry.of(toolName, null));
-    }
-
-    private void enterVersionStep(CatalogEntry entry) {
+    private void chooseTool(CatalogEntry entry) {
         tool = entry;
-        step = Step.VERSION;
-        search.clear();
-        lastQuery = "";
-        index = 0;
+        version = null;
         releases = List.of();
         versionsLoading = true;
+        enterStep(Step.VERSION);
 
-        String toolName = tool.name();
+        String toolName = entry.name();
         ctx.actions().fetchReleases(toolName, fetched -> {
-            // Ignore stale responses if the user already left the version step.
-            if (open && step == Step.VERSION && tool != null && toolName.equals(tool.name())) {
+            // Ignore stale responses if the user has since picked a different tool or closed.
+            if (open && tool != null && toolName.equals(tool.name())) {
                 releases = fetched;
                 versionsLoading = false;
             }
         });
     }
 
-    private void confirmVersion() {
-        if (versionsLoading) {
-            return;
-        }
-        List<SdkRelease> matches = matchingReleases(search.text());
-        if (matches.isEmpty()) {
-            return;
-        }
-        String version = matches.get(Ui.clamp(index, matches.size())).version();
-        assert tool != null;
-        String shortName = tool.name();
-        close();
-        if (pinsOnInstall()) {
-            ctx.actions().useSdk(shortName + "@" + version, installGlobal);
+    /**
+     * Moves to {@code target}. The two search steps share one input box, so it is cleared on the
+     * way in; the two choice steps have none, so focus is cleared and the global key handler
+     * routes keys here instead.
+     */
+    private void enterStep(Step target) {
+        step = target;
+        search.clear();
+        lastQuery = "";
+        index = 0;
+        if (target == Step.TOOL || target == Step.VERSION) {
+            ctx.focus(PanelIds.MODAL_INPUT);
         } else {
-            // This backend installs without pinning — pinning (project/global "use") stays a
-            // separate step in the Tools panel (u / g), same as any other install.
-            ctx.actions().installSdk(new SdkVersion(shortName, version, null, null, null, null, false, false));
+            ctx.clearFocus();
+        }
+    }
+
+    private void run() {
+        if (tool == null || version == null) {
+            return;
+        }
+        String target = toolAtVersion();
+        Where chosen = where;
+        close();
+        switch (chosen) {
+            case PROJECT -> ctx.actions().useSdk(target, false);
+            case GLOBAL -> ctx.actions().useSdk(target, true);
+            case INSTALL_ONLY -> ctx.actions().install(target);
         }
     }
 }

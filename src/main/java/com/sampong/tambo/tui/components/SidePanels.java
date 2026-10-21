@@ -62,8 +62,7 @@ public final class SidePanels {
         STATUS("Status", PanelIds.STATUS, null, '1'),
         TOOLS("Tools", PanelIds.TOOLS, null, '2'),
         ENV("Env", PanelIds.ENV, BackendFeature.ENV, '3'),
-        TASKS("Tasks", PanelIds.TASKS, BackendFeature.TASKS, '4'),
-        ADVANCED("Advanced", PanelIds.ADVANCED, null, '6');
+        TASKS("Tasks", PanelIds.TASKS, BackendFeature.TASKS, '4');
 
         private final String title;
         private final String panelId;
@@ -109,15 +108,9 @@ public final class SidePanels {
     /** The last panel focus genuinely resolved to — what the main pane keeps showing. */
     private Side lastSide = Side.TOOLS;
 
-    /** The panels on offer: everything, minus Advanced until {@code V} turns it on. */
+    /** The panels in the stack, top to bottom. */
     public List<Side> visible() {
-        List<Side> sides = new ArrayList<>();
-        for (Side side : Side.values()) {
-            if (side != Side.ADVANCED || ctx.state().advancedFeatures()) {
-                sides.add(side);
-            }
-        }
-        return sides;
+        return List.of(Side.values());
     }
 
     /** True when the active backend can actually serve {@code side}. */
@@ -144,10 +137,10 @@ public final class SidePanels {
         String id = ctx.focusedId();
         Side side = id == null ? null : switch (id) {
             case PanelIds.STATUS -> Side.STATUS;
-            case PanelIds.TOOLS, PanelIds.TOOLS_FILTER -> Side.TOOLS;
+            // The Versions column is Tools drilled into, so the stack keeps Tools expanded.
+            case PanelIds.TOOLS, PanelIds.TOOLS_FILTER, PanelIds.VERSIONS, PanelIds.VERSIONS_FILTER -> Side.TOOLS;
             case PanelIds.ENV, PanelIds.ENV_FILTER -> Side.ENV;
             case PanelIds.TASKS, PanelIds.TASKS_FILTER -> Side.TASKS;
-            case PanelIds.ADVANCED -> Side.ADVANCED;
             default -> null;
         };
         if (side != null) {
@@ -159,6 +152,12 @@ public final class SidePanels {
     /** True when {@code side} is the panel actually holding focus, not merely the one being shown. */
     public boolean isFocused(Side side) {
         return side.panelId().equals(ctx.focusedId());
+    }
+
+    /** True while the Versions column (or its filter box) holds focus. */
+    public boolean versionsFocused() {
+        String id = ctx.focusedId();
+        return PanelIds.VERSIONS.equals(id) || PanelIds.VERSIONS_FILTER.equals(id);
     }
 
     /** True while the command log under the main pane holds focus rather than any side panel. */

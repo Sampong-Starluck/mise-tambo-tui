@@ -79,6 +79,15 @@ public interface SdkVersionBackend {
      */
     String removePluginWarning(String plugin);
 
+    /**
+     * Reads this backend's install / use / upgrade output for download progress, so the UI can
+     * draw its own animation in place of the CLI's. Defaults to recognising nothing, which
+     * leaves every line logged and shown verbatim.
+     */
+    default ProgressParser progressParser() {
+        return ProgressParser.NONE;
+    }
+
     // ==================== Queries ====================
 
     /** Installed/configured SDK versions. */
@@ -145,6 +154,11 @@ public interface SdkVersionBackend {
         return unsupported(BackendFeature.UPGRADE);
     }
 
+    /** Installs every tool the active config lists. Requires {@link BackendFeature#INSTALL_ALL}. */
+    default CliResult installAll(Consumer<String> onLine, String cancelKey) {
+        return unsupported(BackendFeature.INSTALL_ALL);
+    }
+
     /** Registers a plugin without installing a version. Requires {@link BackendFeature#PLUGIN_REGISTRY}. */
     default CliResult registerPlugin(List<String> args) {
         return unsupported(BackendFeature.PLUGIN_REGISTRY);
@@ -178,6 +192,18 @@ public interface SdkVersionBackend {
     default CliResult prune(Consumer<String> onLine) {
         return unsupported(BackendFeature.PRUNE);
     }
+
+    /** Empties the download cache. Requires {@link BackendFeature#CACHE_CLEAR}. */
+    default CliResult clearCache(Consumer<String> onLine) {
+        return unsupported(BackendFeature.CACHE_CLEAR);
+    }
+
+    /**
+     * Runs the backend's CLI with {@code args} exactly as typed on the {@code :} command line,
+     * streaming merged output. The escape hatch for everything the UI has no button for, so it
+     * is offered by every backend rather than gated behind a feature.
+     */
+    CliResult exec(List<String> args, Consumer<String> onLine, String cancelKey);
 
     /** Updates the backend's own binary. Requires {@link BackendFeature#SELF_UPDATE}. */
     default CliResult selfUpdate(Consumer<String> onLine) {

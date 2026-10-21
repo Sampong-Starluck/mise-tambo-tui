@@ -1,11 +1,15 @@
 package com.sampong.tambo.tui;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import dev.tamboui.picocli.TuiMixin;
 import dev.tamboui.toolkit.app.ToolkitApp;
+import dev.tamboui.toolkit.app.ToolkitRunner;
 import dev.tamboui.toolkit.element.Element;
 import dev.tamboui.tui.TuiConfig;
 
@@ -19,13 +23,19 @@ import com.sampong.tambo.mise.implement.MiseShellActivationServiceImp;
 import com.sampong.tambo.vfox.VfoxSdkBackend;
 import com.sampong.tambo.vfox.VfoxShellActivationServiceImp;
 import com.sampong.tambo.tui.components.AddPluginModal;
-import com.sampong.tambo.tui.components.AdvancedPanel;
+import com.sampong.tambo.tui.components.BatchConfirmModal;
+import com.sampong.tambo.tui.components.CommandLineBar;
+import com.sampong.tambo.tui.components.CommandPalette;
 import com.sampong.tambo.tui.components.ConfigEditorModal;
 import com.sampong.tambo.tui.components.ConfirmModal;
 import com.sampong.tambo.tui.components.DetailPanel;
 import com.sampong.tambo.tui.components.EnvPanel;
 import com.sampong.tambo.tui.components.HelpOverlay;
+import com.sampong.tambo.tui.components.JobsView;
+import com.sampong.tambo.tui.components.LeaderMenu;
 import com.sampong.tambo.tui.components.LogPanel;
+import com.sampong.tambo.tui.components.MenuBar;
+import com.sampong.tambo.tui.components.Modal;
 import com.sampong.tambo.tui.components.RegistryModal;
 import com.sampong.tambo.tui.components.SelectBackendModal;
 import com.sampong.tambo.tui.components.SidePanels;
@@ -34,6 +44,11 @@ import com.sampong.tambo.tui.components.SwitchBackendModal;
 import com.sampong.tambo.tui.components.TaskArgsModal;
 import com.sampong.tambo.tui.components.TasksPanel;
 import com.sampong.tambo.tui.components.ToolsPanel;
+import com.sampong.tambo.tui.components.VersionsPanel;
+import com.sampong.tambo.tui.commands.CommandLineCompleter;
+import com.sampong.tambo.tui.features.ConfigHistory;
+import com.sampong.tambo.tui.state.JobTracker;
+import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo.tui.features.BackendActions;
 import com.sampong.tambo.tui.features.TamboConfig;
 import com.sampong.tambo.tui.features.Theme;
@@ -48,7 +63,7 @@ import org.jspecify.annotations.Nullable;
 import lombok.NonNull;
 
 /**
- * A lazygit-style terminal UI for <a href="https://mise.jdx.dev">mise</a>.
+ * A terminal UI for <a href="https://mise.jdx.dev">mise</a> and vfox.
  * <p>
  * This class is a thin orchestrator: it owns Spring wiring and the {@code ToolkitApp} process
  * hooks ({@code configure}/{@code onStart}/{@code render}) — Java requires overrides to live on
@@ -59,8 +74,8 @@ import lombok.NonNull;
  *       from, plus the {@link UiContext} interface panels see the app through</li>
  *   <li>{@code features/} — {@link BackendActions} and other background/feature logic</li>
  *   <li>{@code components/} — one class per panel: {@link StatusPanel}, {@link ToolsPanel},
- *       {@link EnvPanel}, {@link TasksPanel}, {@link DetailPanel}, {@link LogPanel},
- *       {@link AdvancedPanel}, plus the modal/overlay components</li>
+ *       {@link VersionsPanel}, {@link EnvPanel}, {@link TasksPanel}, {@link DetailPanel},
+ *       {@link LogPanel}, plus the modal/overlay components</li>
  *   <li>{@code layout/} — {@link AppLayout}: turns state into what's on screen</li>
  *   <li>{@code keys/} — {@link GlobalKeyBindings}: turns a keypress into an action</li>
  *   <li>{@code lifecycle/} — {@link AppLifecycle}: backend selection and session start</li>
@@ -88,41 +103,49 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
         this.config = config;
         this.state = new UiState();
         this.state.offline(command.offline());
-        this.state.advancedFeatures(command.advancedFeatures());
         this.tuiOptions = command.tuiOptions();
 
         this.lifecycle = new AppLifecycle(miseActivation, vfoxActivation,
                 cancelRegistry, miseSdkBackend, vfoxSdkBackend, executor, state,
-                r -> runner().runOnRenderThread(r), command);
+                this::runOnRenderThreadIfRunning, command);
 
         StatusPanel statusPanel = new StatusPanel(this);
         ToolsPanel toolsPanel = new ToolsPanel(this);
+        VersionsPanel versionsPanel = new VersionsPanel(this);
         TasksPanel tasksPanel = new TasksPanel(this);
         EnvPanel envPanel = new EnvPanel(this);
-        AdvancedPanel advancedPanel = new AdvancedPanel(this);
         // Status is the one panel sized to its content rather than to a share of the sidebar,
         // so the stack has to be able to ask it how tall it currently is.
         SidePanels sidePanels = new SidePanels(this, statusPanel::rowCount);
+        CommandLineBar commandLine = new CommandLineBar(this, this::completer, args -> actions().exec(args));
+        HelpOverlay helpOverlay = new HelpOverlay(this, this::terminalHeight, this::terminalWidth);
+        MenuBar menuBar = new MenuBar(this);
         this.ui = new TuiComponents(
                 statusPanel,
                 toolsPanel,
+                versionsPanel,
                 envPanel,
                 tasksPanel,
-                new DetailPanel(this, sidePanels, toolsPanel, tasksPanel, envPanel, advancedPanel),
+                new DetailPanel(this, sidePanels, toolsPanel, tasksPanel, envPanel, versionsPanel),
                 new LogPanel(this),
-                advancedPanel,
                 sidePanels,
                 new RegistryModal(this),
                 new ConfigEditorModal(this),
                 new ConfirmModal(this),
+                new BatchConfirmModal(this),
                 new TaskArgsModal(this),
                 new AddPluginModal(this),
-                new HelpOverlay(this, this::terminalHeight, this::terminalWidth),
+                helpOverlay,
                 new SelectBackendModal(),
-                new SwitchBackendModal(this));
+                new SwitchBackendModal(this),
+                new CommandPalette(this, commandLine::open),
+                new LeaderMenu(this),
+                commandLine,
+                new JobsView(this, state.jobs(), job -> actions().cancelJob(job), this::recentChanges),
+                menuBar);
         this.keyBindings = new GlobalKeyBindings(this, ui, config);
-        this.layout = new AppLayout(this, ui, this::terminalHeight, this::terminalWidth,
-                keyBindings::buildAdvancedActions);
+        menuBar.onKeyboardHelp(keyBindings::openHelp);
+        this.layout = new AppLayout(this, ui, this::terminalHeight, this::terminalWidth);
     }
 
     // ==================== UiContext ====================
@@ -163,10 +186,8 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     }
 
     @Override
-    public boolean modalOpen() {
-        return !ui.registryModal().isOpen() && !ui.configEditor().isOpen() && !ui.confirmModal().isOpen()
-                && !ui.taskArgsModal().isOpen() && !ui.addPluginModal().isOpen() && !ui.selectBackendModal().isOpen()
-                && !ui.switchBackendModal().isOpen();
+    public boolean noModalOpen() {
+        return ui.modals().stream().noneMatch(Modal::isOpen);
     }
 
     @Override
@@ -182,6 +203,78 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     public void promptVersionFor(String tool) {
         ui.registryModal().openAtVersion(tool);
+    }
+
+    @Override
+    public void requestUpgrade(List<SdkVersion> sdks) {
+        List<BatchConfirmModal.Item> items = sdks.stream()
+                .map(sdk -> new BatchConfirmModal.Item(sdk.name(), sdk.version(),
+                        state.outdated().getOrDefault(sdk.name(), "newest allowed"), where(sdk)))
+                .toList();
+        String title = sdks.size() == 1 ? "Upgrade " + sdks.getFirst().name() + "?" : "Upgrade " + sdks.size() + " tools?";
+        ui.batchConfirm().open(title, items,
+                "Runs " + JobTracker.CONCURRENCY + " at a time in the background — keep working, press w to watch.\n"
+                        + "Old versions stay installed until you prune them, so z can undo.",
+                () -> {
+                    sdks.forEach(sdk -> actions().upgradeSdk(sdk));
+                    state.clearMarks();
+                });
+    }
+
+    @Override
+    public void requestUninstall(List<SdkVersion> sdks) {
+        List<BatchConfirmModal.Item> items = sdks.stream()
+                .map(sdk -> new BatchConfirmModal.Item(sdk.label(), "", "", where(sdk)))
+                .toList();
+        String title = sdks.size() == 1 ? "Uninstall " + sdks.getFirst().label() + "?" : "Uninstall " + sdks.size() + " tools?";
+        ui.batchConfirm().open(title, items,
+                "Deletes the installed files. Config files are not changed, so a pinned version\n"
+                        + "shows as ✗ missing afterwards until it is installed again.",
+                () -> {
+                    sdks.forEach(sdk -> actions().uninstallSdk(sdk));
+                    state.clearMarks();
+                });
+    }
+
+    /** Ends the session; widens {@code ToolkitApp}'s protected quit for the palette and F10. */
+    @Override
+    public void quit() {
+        super.quit();
+    }
+
+    /** Short "which config" label for a confirmation row. */
+    private static String where(SdkVersion sdk) {
+        String path = sdk.sourcePath() == null ? "" : sdk.sourcePath().replace('\\', '/');
+        if (path.contains("/.config/mise/") || "global".equalsIgnoreCase(sdk.sourceType())) {
+            return "global config";
+        }
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    /**
+     * What the {@code :} line completes from: the backend's subcommands, the tools on screen,
+     * and for {@code tool@} the versions already known locally — never a network call per
+     * keystroke.
+     */
+    private CommandLineCompleter completer() {
+        return new CommandLineCompleter(backend().name(), CommandLineCompleter.DEFAULT_SUBCOMMANDS,
+                tool -> {
+                    List<String> versions = new ArrayList<>();
+                    String latest = state.outdated().get(tool);
+                    if (latest != null) {
+                        versions.add(latest);
+                    }
+                    state.sdks().stream().filter(sdk -> sdk.name().equals(tool) && sdk.hasVersion())
+                            .map(SdkVersion::version).forEach(versions::add);
+                    return versions.stream().distinct().toList();
+                },
+                () -> state.sdks().stream().map(SdkVersion::name).distinct().toList());
+    }
+
+    /** The jobs view's "Recent changes" column, newest first. */
+    private List<String> recentChanges() {
+        return state.history().recent(8).stream().map(ConfigHistory::line).toList();
     }
 
     // ==================== ToolkitApp hooks ====================
@@ -212,6 +305,19 @@ public final class MiseTuiApp extends ToolkitApp implements UiContext {
     @Override
     protected Element render() {
         return layout.render();
+    }
+
+    /**
+     * Marshals background results onto the render thread, or drops them when there is no
+     * runner: before the TUI has started, or after it has quit while a load or install was
+     * still finishing. Such a result has nowhere to go, and calling through the null runner
+     * printed a NullPointerException over the user's shell after exit.
+     */
+    private void runOnRenderThreadIfRunning(Runnable r) {
+        ToolkitRunner runner = runner();
+        if (runner != null) {
+            runner.runOnRenderThread(r);
+        }
     }
 
     /** Counterpart to {@link #terminalHeight()}: only the help overlay sizes itself by width too. */

@@ -24,7 +24,7 @@ import lombok.NonNull;
  * for ownership of stdin and crashed. Routing the choice through the TUI's own input
  * loop instead means only one thing ever reads stdin, avoiding that whole bug class.
  */
-public final class SelectBackendModal {
+public final class SelectBackendModal implements Modal {
 
     private static final int WIDTH = 60;
 

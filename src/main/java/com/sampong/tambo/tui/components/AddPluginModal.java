@@ -32,24 +32,21 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * Registers a vfox plugin standalone, without installing any version. Two entry points share
- * this one modal: {@code p} opens it unconditionally for the everyday flow, {@code P} opens it
- * only once {@code advancedFeatures} is on ({@code V} to toggle, {@code --advanced-features} to
- * start with it on) — the modal's own behavior doesn't otherwise depend on which key opened it.
+ * this one modal: {@code p} for the everyday flow and {@code Space P} from the Space menu — the
+ * modal's own behavior doesn't depend on which key opened it.
  * Fuzzy-finds across the
  * full {@code vfox available} catalog the same way the "Add SDK" modal does; Enter adds
  * whichever entry is highlighted. Since the query is matched as a subsequence, anything longer
  * than every candidate name necessarily fails to match — so typing the advanced
  * {@code <name> --alias <x> --source <url>} syntax (longer than any bare plugin name) always
- * falls through to submitting the raw typed text instead of a highlighted match. That fallback
- * is also where the syntax is gated: it only runs when {@code advancedFeatures} is on —
- * otherwise a catalog miss just logs a nudge instead of submitting anything. vfox-only — mise
+ * falls through to submitting the raw typed text instead of a highlighted match. vfox-only — mise
  * has no equivalent in this app (mise tools are always added implicitly via the registry "Add
  * SDK" flow instead). Esc cancels.
  * <p>
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
 @RequiredArgsConstructor
-public final class AddPluginModal {
+public final class AddPluginModal implements Modal {
 
     private static final int VISIBLE_ROWS = 10;
     private static final int WIDTH = 76;
@@ -85,9 +82,7 @@ public final class AddPluginModal {
 
     /** The context-sensitive hint line the footer shows while the prompt is open. */
     public String footerHint() {
-        return ctx.state().advancedFeatures()
-                ? "type to fuzzy find, or name [--alias x] [--source url]   enter add   esc cancel"
-                : "type to fuzzy find a catalog plugin   enter add   esc cancel   (V: --alias/--source)";
+        return "type to fuzzy find, or name [--alias x] [--source url]   enter add   esc cancel";
     }
 
     public Element build() {
@@ -103,9 +98,7 @@ public final class AddPluginModal {
         content.add(row(
                 text("Search ").dim(),
                 textInput(search)
-                        .placeholder(ctx.state().advancedFeatures()
-                                ? "nodejs   or   myplugin --alias foo --source https://…"
-                                : "nodejs")
+                        .placeholder("nodejs   or   myplugin --alias foo --source https://…")
                         .placeholderColor(Color.DARK_GRAY)
                         .id(PanelIds.ADD_PLUGIN_INPUT)
                         .focusable(true)
@@ -116,14 +109,10 @@ public final class AddPluginModal {
         Lazy<List<CatalogEntry>> registry = ctx.state().catalogLazy();
         if (ctx.state().catalog().isEmpty()) {
             content.add(text(registry.everLoaded() || registry.failed()
-                    ? (ctx.state().advancedFeatures()
-                            ? "Catalog unavailable — type a name and flags to add it directly"
-                            : "Catalog unavailable")
+                    ? "Catalog unavailable — type a name and flags to add it directly"
                     : "Loading catalog…").dim());
         } else if (matches.isEmpty()) {
-            content.add(text(ctx.state().advancedFeatures()
-                    ? "No catalog match — enter adds \"" + query + "\" as typed"
-                    : "No catalog match — --alias/--source needs advanced features (V)").dim());
+            content.add(text("No catalog match — enter adds \"" + query + "\" as typed").dim());
         } else {
             addWindowedRows(content, matches.size(), i -> pluginRow(matches, i));
         }
@@ -197,14 +186,8 @@ public final class AddPluginModal {
         String typed = search.text();
         List<CatalogEntry> matches = fuzzyPlugins(typed);
         if (matches.isEmpty()) {
-            // Nothing in the catalog matched — that's always true for the advanced
-            // --alias/--source syntax, since it's longer than any bare candidate name, so
-            // this is also where that syntax is gated behind advancedFeatures.
-            if (!ctx.state().advancedFeatures()) {
-                ctx.state().addLog(LogLevel.INFO,
-                        "No catalog match — --alias/--source syntax is an advanced feature, press V to enable it");
-                return;
-            }
+            // Nothing in the catalog matched — always true for the --alias/--source syntax,
+            // since it's longer than any bare candidate name — so submit it as typed.
             close();
             ctx.actions().registerPlugin(typed);
             return;

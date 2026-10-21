@@ -23,23 +23,29 @@ This TUI application is a Spring Boot CLI application built with [TamboUI](https
 ### Main panels
 
 - `StatusPanel` — shows the current `mise` status and health signals (mise only)
-- `ToolsPanel` — lists tools and versions, with filtering and actions
+- `ToolsPanel` — lists tools with a status glyph per row (`✓` installed, `➜` installing or queued, `✗` in the config but missing, `↑` newer version available, `*` marked), filtering, batch marks, and actions
+- `VersionsPanel` — the column right of Tools (yazi-style Miller columns): every installed and available version of the selected tool
 - `EnvPanel` — surfaces environment-related data and shell activation context (mise only)
 - `TasksPanel` — discovers and runs project-defined tasks (mise only)
 - `DetailPanel` — shows detailed information for the current selection
 - `LogPanel` — captures operation output and severity levels
-- `AdvancedPanel` — a `[advanced]`-key cheatsheet in the left sidebar, shown only while `V` / `--advanced-features` is on
+- `JobsView` (`w`) — installs, upgrades and other long operations with progress, output, retry and cancel; downloads run two at a time and the rest queue
 
 In vfox mode, only the **Tools** and **Log** panels are shown — vfox has no task runner, env inspection, doctor, trust, or prune equivalent.
 
 ### Extra UI flows
 
-- `RegistryModal` — the `a` "Add SDK" flow: fuzzy-find a tool then a version. mise browses the full `mise registry` catalog; vfox is scoped to plugins you've already added (from `vfox list`) — install a new plugin from the full catalog with `p` first. vfox's Enter only installs a version (it doesn't pin/use it — that stays a separate step)
-- `AddPluginModal` — vfox only: fuzzy-finds and registers a plugin standalone via `vfox add`, without installing a version. `p` opens it unconditionally for the everyday catalog browse; `P` opens the same modal but only once advanced features (`V`) are on, for typing the raw `--alias`/`--source` syntax directly
+- `RegistryModal` — the `a` "Add SDK" wizard: Tool → Version → Where → Confirm. Fuzzy-find a tool, then a version; choose where it applies (this project, everywhere, or just install it — each says which file it writes); the confirm step shows the exact command before it runs. `Shift+Tab` goes back a step, `Esc` cancels. mise browses the full `mise registry` catalog; vfox is scoped to plugins you've already added (from `vfox list`) — install a new plugin from the full catalog with `p` first
+- `AddPluginModal` — vfox only: fuzzy-finds and registers a plugin standalone via `vfox add`, without installing a version (`p`, or `Space P` to type the raw `--alias`/`--source` syntax)
+- `CommandPalette` (`Ctrl+P`) — every action, fuzzy-searchable, with its key shown beside it
+- `LeaderMenu` (`Space`) — a which-key popup for the less common actions (trust, doctor, prune, self-update, …); it names each second key as you need it
+- `CommandLineBar` (`:`) — type a raw `mise`/`vfox` command with completion and a "will run" preview
+- `BatchConfirmModal` — lists every tool an upgrade or uninstall will touch, flags major-version jumps, and defaults to **No**
+- `MenuBar` + `FKeyBar` — optional beginner mode (`Space m`): a menu bar on top (`F9`) and Midnight Commander-style F-keys at the bottom
 - `ConfigEditorModal` — in-app editor for the project config (`mise.toml` / `.vfox.toml`) and, for mise, the global `config.toml`
 - `TaskArgsModal` — mise only: run the selected task with extra arguments
-- `ConfirmModal` — confirmation prompts for destructive actions (uninstall, prune, upgrade-all, …)
-- `HelpOverlay` (`?`) — the in-app shortcut reference, backend-aware
+- `ConfirmModal` — confirmation prompts for destructive actions (prune, upgrade-all, …)
+- `HelpOverlay` (`F1` / `?`) — help for the focused panel first, then the global keys and what each symbol means; `/` searches it, `Tab` switches panel
 
 ## Prerequisites
 
@@ -66,7 +72,7 @@ tambo picks a version-manager backend once at startup and uses it for the whole 
 Other flags:
 
 - `--offline` — skips anything that needs the network (install, use, self-update, Add SDK); shows only already-installed tools.
-- `--advanced-features` — starts the session with the [Advanced features](#advanced-features) panel already unlocked, same as pressing `V`.
+- `--advanced-features` — accepted for compatibility but no longer does anything: every action is always available from the `Space` menu and the `Ctrl+P` palette.
 - `-h`, `--help` — prints usage and exits.
 - `-V`, `--version` — prints the app version and exits.
 
@@ -79,7 +85,7 @@ This is unrelated to the mise/vfox choice above — it's which TamboUI library r
 1. The `tamboui.backend` system property or `TAMBOUI_BACKEND` environment variable, if either is set externally, wins outright.
 2. Otherwise, the persisted `ui.backend` in `tambo.properties` is used — `jline3` if unset.
 
-Press `B` in the [Advanced features](#advanced-features) panel to switch; it persists the choice to `tambo.properties` and logs a reminder that it takes effect on the next restart, not the running session.
+Press `Space B` to switch; it persists the choice to `tambo.properties` and logs a reminder that it takes effect on the next restart, not the running session.
 
 **jline3** — pure-Java terminal I/O:
 
@@ -109,7 +115,7 @@ Press `B` in the [Advanced features](#advanced-features) panel to switch; it per
 ./mvnw clean package
 ```
 
-This produces an executable JAR at `target/mise-tambo-0.0.2.jar`.
+This produces an executable JAR at `target/mise-tambo-<version>.jar`.
 
 ### Build a native image
 
@@ -180,66 +186,86 @@ mise run compile-native
 ### Run the built artifact
 
 ```bash
-java -jar target/mise-tambo-0.0.2.jar
+java -jar target/mise-tambo-<version>.jar
 # or, after building the native image:
 mise-tambo
 ```
 
 ## Keyboard shortcuts
 
-The UI is designed to be keyboard-first. `?` opens the full, backend-aware in-app reference at any time; the summary below matches it.
+The UI is keyboard-first, and nothing needs memorising up front: the footer shows the keys for the
+focused panel, `Ctrl+P` lists every action with its key, `Space` pops a menu of the less common
+ones, and `F1` explains the panel you are in. The summary below matches them.
+
+### Finding things
+
+- `Ctrl+P` — command palette: every action, searchable, with its key
+- `Space` — more actions (which-key menu): `t` trust, `i` install everything in config, `e`/`E` edit project/global config, `u` upgrade all outdated, `C` check for updates, `s` self-update, `p` prune, `c` clear download cache, `d` doctor, `m` beginner mode, `a` activate shell, `B` terminal backend, `P` add plugin by alias/source (vfox)
+- `:` — type a `mise`/`vfox` command, with `Tab` completion for subcommands, tools and `tool@version`
+- `Ctrl+O` — jump mode: panels show a label; type it to move there (`1`-`5` panels, `v` Versions, `w` Jobs)
+- `F1` / `?` — help for the focused panel
+- `1`-`5` — jump to Status / Tools / Env / Tasks / Log; `Tab` / `Shift+Tab` — next / previous panel
+- `j` / `k`, arrow keys, `Home`, `End`, `Page Up`, `Page Down` — navigate lists
 
 ### Global
 
-- `?` — open help overlay
 - `a` — mise: fuzzy-find and install an SDK from the full registry. vfox: install another version of an already-added plugin
 - `p` — vfox only: fuzzy-find and register a new plugin from the full catalog (`vfox add`)
-- `A` — activate shell integration for the active backend
+- `w` — jobs: running, queued, failed and finished operations, with output; `r` retry, `c` cancel, `l` full log
+- `z` / `Z` — undo / redo the last config change tambo made (restores `mise.toml` or the global config; installs are not undone)
 - `e` — edit the project config (`mise.toml` / `.vfox.toml`)
-- `V` — toggle the **Advanced** panel and unlock the `[advanced]` keys below (see [Advanced features](#advanced-features))
-- `E` *[advanced]* — edit the global `mise` config (mise only)
-- `T` *[advanced]* — trust this project's mise config (mise only)
-- `D` *[advanced]* — run `mise doctor` (mise only)
-- `U` *[advanced]* — self-update: `mise self-update` or `vfox upgrade`
-- `B` *[advanced]* — switch the UI backend between `jline3`/`panama`/`aesh`; takes effect on restart (see [Choosing a UI backend](#choosing-a-ui-backend-jline3-vs-panama-vs-aesh))
-- `P` — mise: upgrade all outdated tools (asks to confirm). vfox *[advanced]*: register a plugin by explicit name with `--alias`/`--source` (opens the same modal as `p`, but only once advanced features are on)
-- `X` *[advanced]* — prune unused/old tool versions (mise only)
-- `r` — refresh the current UI state
-- `C` — cancel every running operation, from any panel
-- `1` / `3` / `4` — jump to status / env / tasks panels (mise only)
-- `2` / `5` — jump to tools / log panels
-- `1`-`5` (mise) or `2`, `5` (vfox), `Tab` / `Shift+Tab` — panel navigation
-- `j` / `k`, arrow keys, `Home`, `End`, `Page Up`, `Page Down` — navigate lists
+- `A` — activate shell integration for the active backend
+- `r` — refresh
+- `C` — cancel every running or queued operation
+- `q` — quit
 
 ### Tools panel
 
+- `Enter` / `→` — open the Versions column for the selected tool (`Esc` / `←` goes back)
 - `i` — install the selected tool version
-- `u` — use (install and pin) the selected tool version at project scope (`-p` for vfox)
-- `g` — install and pin the selected tool version globally (`-g` for vfox)
-- `x` *[advanced]* — uninstall the selected tool (asks to confirm)
-- `R` *[advanced]* — remove the selected tool from the project config (asks to confirm)
-- `d` *[advanced]* — remove the selected tool's plugin (asks to confirm). vfox: `vfox remove -y` also deletes **every installed version** of it. mise: `mise plugins uninstall` keeps installed versions, and only works for external plugins — core and registry tools have no plugin to remove
-- `p` — upgrade the selected tool to its newest version (mise only)
-- `c` — cancel the selected tool's operation
-- `C` — cancel all running operations
+- `u` — use (install and pin) the selected version at project scope (`-p` for vfox)
+- `g` — install and pin the selected version globally (`-g` for vfox)
+- `U` — upgrade the marked tools, or the selected one (mise only; asks first, defaulting to No)
+- `x` — uninstall the marked tools, or the selected one (asks first, defaulting to No)
+- `R` — remove the selected tool from the project config (asks to confirm)
+- `d` — remove the selected tool's plugin (asks to confirm). vfox: `vfox remove -y` also deletes **every installed version** of it. mise: `mise plugins uninstall` keeps installed versions, and only works for external plugins — core and registry tools have no plugin to remove
+- `m` — mark / unmark for a batch action; `Ctrl+A` marks every outdated tool; `Esc` clears the marks
+- `o` — show only outdated tools; `+` — full-screen table with latest and where columns
+- `/` — filter; `y` — copy the install path; `c` — cancel the selected tool's operation
 
-### Advanced features
+### Versions column
 
-Maintenance and config-mutating actions — trust, global config editing, doctor, self-update, prune,
-uninstall, remove-from-config, remove plugin, switching the UI backend, and the Add Plugin `--alias`/`--source`
-syntax — are hidden by
-default so a new session's keyboard surface starts small. Press `V` to reveal them: it flips
-`advancedFeatures` on for the session, unlocks the `[advanced]` keys above, and shows an
-**Advanced** panel in the left sidebar listing them for the active backend. Press `V` again to
-hide it. Launch with `--advanced-features` to start a session with it already on.
+- `i` install only, `u` use here, `g` set global, `y` copy `tool@version`, `/` filter
+- On a terminal narrower than 96 columns the columns become a drill-down under a breadcrumb (`tambo › Tools › node`); `Enter` opens the detail, `Esc` goes back
 
 ### Tasks panel (mise only)
 
 - `Enter` — run the selected task
-- `:` — run the selected task with arguments
+- `>` — run the selected task with arguments
 - `.` — re-run the last task
 - `c` — cancel the selected task
-- `C` — cancel all running operations
+
+### Beginner mode
+
+`Space m` adds a menu bar and an F-key bar. Open a menu by clicking its name, with `F9`, or with
+`Alt` + its underlined letter (`Alt+F` File, `Alt+T` Tools, `Alt+P` Project, `Alt+A` Tasks, `Alt+V`
+View, `Alt+H` Help — these also switch beginner mode on). Arrows move, `Enter` or a click runs an
+entry, `Esc` or a click elsewhere closes it. VS Code's integrated terminal keeps `F9`/`F10` for its
+debugger by default, so use a click or `Alt` there. The F-key bar:
+`F1` help, `F2` versions, `F3` install, `F4` use, `F5` global, `F6` upgrade, `F7` add SDK, `F8` remove, `F9` menu, `F10` quit.
+Every menu entry shows the key that does the same thing without the menu.
+
+### `pick` — choose a version without opening the full UI
+
+`mise-tambo pick <tool>` opens a small fzf-style picker under your shell prompt instead of the full
+screen: type to filter the versions, then `Enter` uses it in this project, `Ctrl+G` sets it
+globally, `Alt+I` only installs it, `Esc` cancels. It then disappears and leaves one line, e.g.
+`✓ node 22.11.0 → mise.toml (project)`, and exits 0 on success, 1 otherwise.
+
+### Small terminals
+
+Below 60×16 tambo shows how big the window is and how big it needs to be, and comes back by itself
+when the terminal is resized.
 
 ## Runtime behavior
 
@@ -306,8 +332,10 @@ hide it. Launch with `--advanced-features` to start a session with it already on
         │   └── AppLayout.java                (turns UiState into what's on screen: header, sidebar
         │                                       accordion, main column, footer, modal stacking)
         ├── keys/
-        │   └── GlobalKeyBindings.java        (turns a keypress into an action: the global key
-        │                                       handler, nav bindings, and the Advanced menu's actions)
+        │   ├── GlobalKeyBindings.java        (turns a keypress into an action: the global key
+        │   │                                   handler, jump mode, F-keys, nav bindings)
+        │   └── CommandCatalog.java           (every action as a Command: what the palette, the
+        │                                       Space menu and the menu bar list)
         ├── lifecycle/
         │   └── AppLifecycle.java             (mise/vfox backend selection, first-run picker
         │                                       callback, and session-start data load)
@@ -318,9 +346,15 @@ hide it. Launch with `--advanced-features` to start a session with it already on
         │   ├── TasksPanel.java               (task runner with running… indicator)
         │   ├── DetailPanel.java              (detailed info for current selection)
         │   ├── LogPanel.java                 (streaming operation output)
-        │   ├── AdvancedPanel.java            (interactive menu for maintenance/config actions)
-        │   ├── HelpOverlay.java              (? — keyboard reference)
-        │   ├── RegistryModal.java            (add SDK fuzzy-find modal)
+        │   ├── VersionsPanel.java            (Versions column: installed and available versions)
+        │   ├── JobsView.java                 (w — jobs with progress, output, retry)
+        │   ├── CommandPalette.java           (Ctrl+P — searchable list of every action)
+        │   ├── LeaderMenu.java               (Space — which-key menu)
+        │   ├── CommandLineBar.java           (: — raw command line with completion)
+        │   ├── BatchConfirmModal.java        (confirm that lists every tool, defaults to No)
+        │   ├── MenuBar.java / FKeyBar.java   (beginner mode)
+        │   ├── HelpOverlay.java              (F1 / ? — help for the focused panel)
+        │   ├── RegistryModal.java            (a — Add SDK wizard: tool, version, where, confirm)
         │   ├── AddPluginModal.java           (vfox-only plugin registration modal)
         │   ├── ConfigEditorModal.java        (in-app project/global config editor)
         │   ├── TaskArgsModal.java            (run a task with extra arguments)

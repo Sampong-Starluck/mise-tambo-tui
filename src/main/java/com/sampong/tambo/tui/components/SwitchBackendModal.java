@@ -32,7 +32,7 @@ import lombok.RequiredArgsConstructor;
  * global handler in {@code MiseTuiApp} rather than an {@code onKeyEvent}.
  */
 @RequiredArgsConstructor
-public final class SwitchBackendModal {
+public final class SwitchBackendModal implements Modal {
 
     private static final int WIDTH = 76;
 
@@ -59,6 +59,7 @@ public final class SwitchBackendModal {
     private @Nullable Consumer<String> onConfirm;
     private @Nullable String preOpenFocus;
 
+    @Override
     public boolean isOpen() {
         return open;
     }

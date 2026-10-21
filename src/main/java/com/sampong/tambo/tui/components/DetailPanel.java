@@ -24,9 +24,13 @@ import dev.tamboui.widgets.common.ScrollBarPolicy;
 
 import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo._common.model.BackendInfo;
+import com.sampong.tambo._common.model.InstallProgress;
 import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo.tui.state.ProgressSnapshot;
 import com.sampong.tambo.tui.state.UiContext;
+
+import org.jspecify.annotations.Nullable;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -65,7 +69,7 @@ public final class DetailPanel {
     @NonNull
     private final EnvPanel envPanel;
     @NonNull
-    private final AdvancedPanel advancedPanel;
+    private final VersionsPanel versionsPanel;
 
     /**
      * First visible line of the pane, and the panel it belongs to. Reset when the stack moves to
@@ -77,10 +81,9 @@ public final class DetailPanel {
 
     /**
      * {@code width} is the pane's rendered column count, used to wrap the long free text this
-     * pane exists to show — a {@code PATH} value, a task's command line, an advanced action's
-     * warning.
+     * pane exists to show — a {@code PATH} value, a task's command line.
      */
-    public Panel build(int width, List<AdvancedPanel.Action> advancedActions) {
+    public Panel build(int width) {
         SidePanels.Side side = sidePanels.focused();
         int wrap = Math.max(20, width - CHROME_WIDTH);
         List<Element> lines = new ArrayList<>();
@@ -97,11 +100,19 @@ public final class DetailPanel {
                 }
                 case TOOLS -> {
                     SdkVersion tool = toolsPanel.selected();
-                    title = tool == null ? "Tools" : tool.name();
-                    if (tool == null) {
-                        addWelcome(lines);
+                    VersionRows.VersionRow version = sidePanels.versionsFocused() ? versionsPanel.selected() : null;
+                    if (tool != null && version != null) {
+                        // The column to the left is browsing versions: describe the one under its
+                        // cursor, the way yazi's preview follows the middle column.
+                        title = tool.name() + " " + version.version();
+                        addVersionDetail(lines, tool.name(), version);
                     } else {
-                        addToolDetail(lines, tool);
+                        title = tool == null ? "Tools" : tool.name();
+                        if (tool == null) {
+                            addWelcome(lines);
+                        } else {
+                            addToolDetail(lines, tool);
+                        }
                     }
                 }
                 case ENV -> {
@@ -120,15 +131,6 @@ public final class DetailPanel {
                         addEmpty(lines, "No task selected.");
                     } else {
                         addTaskDetail(lines, task, wrap);
-                    }
-                }
-                case ADVANCED -> {
-                    AdvancedPanel.Action action = advancedPanel.selected(advancedActions);
-                    title = action == null ? "Advanced" : action.label();
-                    if (action == null) {
-                        addEmpty(lines, "Nothing to do here right now.");
-                    } else {
-                        addActionDetail(lines, action, wrap);
                     }
                 }
                 default -> {
@@ -229,20 +231,44 @@ public final class DetailPanel {
         if (latest != null) {
             lines.add(field("Upgrade", text("↑ " + latest + " available").yellow()));
         }
+        addProgress(lines, ToolsPanel.progressFor(ctx, t));
         if (pendingChange) {
             lines.add(text(""));
             lines.add(text(ctx.backend().projectConfigFileName() + " asks for "
                     + t.requested() + ", which is not what is installed.").yellow());
         }
         lines.add(text(""));
+        if (latest != null) {
+            lines.add(hints(Ui.keyHint("U", "upgrade → " + latest)));
+        }
         lines.add(hints(
-                Ui.keyHint("i", "install"),
+                Ui.keyHint("Enter", "other versions"),
                 Ui.keyHint("u", "use in " + ctx.backend().projectConfigFileName()),
                 Ui.keyHint("g", "set global")));
         lines.add(hints(
+                Ui.keyHint("y", "copy path"),
                 Ui.keyHint("x", "uninstall"),
-                Ui.keyHint("R", "remove from config"),
-                Ui.keyHint("d", "remove plugin")));
+                Ui.keyHint("R", "remove from config")));
+    }
+
+    /** The wide progress bar and whichever figures the backend reported, while an install runs. */
+    private static void addProgress(List<Element> lines, @Nullable ProgressSnapshot progress) {
+        if (progress == null) {
+            return;
+        }
+        InstallProgress p = progress.progress();
+        lines.add(text(""));
+        lines.add(field("Progress", text(ProgressBar.wide(progress)).yellow()));
+        lines.add(field("Phase", text(p.phase().label()).yellow()));
+        if (p.transferred() != null) {
+            lines.add(field("Transferred", text(p.transferred())));
+        }
+        if (p.speed() != null) {
+            lines.add(field("Speed", text(p.speed())));
+        }
+        if (p.eta() != null) {
+            lines.add(field("Remaining", text(p.eta()).dim()));
+        }
     }
 
     /**
@@ -287,19 +313,58 @@ public final class DetailPanel {
         lines.add(text(""));
         lines.add(hints(
                 Ui.keyHint("Enter", "run"),
-                Ui.keyHint(":", "run with args"),
+                Ui.keyHint(">", "run with args"),
                 Ui.keyHint(".", "re-run last"),
                 Ui.keyHint("c", "cancel")));
     }
 
-    private void addActionDetail(List<Element> lines, AdvancedPanel.Action action, int wrap) {
-        lines.add(row(text(" " + action.key() + " ").bold().yellow(), text(action.label()).bold()));
-        lines.add(text(""));
-        for (String line : Ui.wordWrap(action.description(), wrap)) {
-            lines.add(text(line).dim());
+    /**
+     * One version from the Versions column: where it stands for this project, what is pinned
+     * globally, what is newest, and the exact command {@code u} would run — so choosing a version
+     * never means guessing which config file it will land in.
+     */
+    private void addVersionDetail(List<Element> lines, String tool, VersionRows.VersionRow version) {
+        SdkVersion installed = null;
+        String activeIn = null;
+        String global = null;
+        for (SdkVersion sdk : ctx.state().sdks()) {
+            if (!sdk.name().equals(tool)) {
+                continue;
+            }
+            if (sdk.version().equals(version.version())) {
+                installed = sdk;
+            }
+            if (sdk.active()) {
+                activeIn = sdk.version() + "  " + Ui.nullToDash(sdk.sourcePath());
+            }
+            String source = (sdk.sourcePath() == null ? "" : sdk.sourcePath().replace('\\', '/'))
+                    + " " + Ui.nullToDash(sdk.sourceType());
+            if (source.contains("/.config/mise/") || source.toLowerCase().contains("global")) {
+                global = sdk.version();
+            }
+        }
+        String latest = ctx.state().outdated().get(tool);
+        String configFile = ctx.backend().projectConfigFileName();
+
+        String status = version.active() ? "installed · active here"
+                : version.installed() ? "installed" : "not installed";
+        lines.add(field("Status", text(status).fg(version.active() ? Color.GREEN
+                : version.installed() ? Color.CYAN : Color.DARK_GRAY)));
+        lines.add(field("Active here", text(activeIn == null ? "-" : activeIn).dim()));
+        lines.add(field("Global", text(global == null ? "-" : global).dim()));
+        lines.add(field("Latest", latest == null ? text("-").dim() : text(latest + "  ↑").yellow()));
+        if (installed != null) {
+            lines.add(field("Install path", text(Ui.nullToDash(installed.installPath())).dim()));
         }
         lines.add(text(""));
-        lines.add(hints(Ui.keyHint("Enter", "run this"), Ui.keyHint(action.key(), "same, from anywhere")));
+        lines.add(row(text("will run  ").dim(),
+                text("$ " + ctx.backend().name() + " use " + tool + "@" + version.version()).cyan()));
+        lines.add(text(""));
+        lines.add(hints(
+                Ui.keyHint("u", "use in " + configFile),
+                Ui.keyHint("g", "set global"),
+                version.installed() ? Ui.keyHint("y", "copy") : Ui.keyHint("i", "install only")));
+        lines.add(hints(Ui.keyHint("Esc", "back to tools")));
     }
 
     /** The backend's own explanation for a panel it cannot serve, rather than an empty pane. */

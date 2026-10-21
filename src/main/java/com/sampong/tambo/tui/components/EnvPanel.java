@@ -107,7 +107,7 @@ public final class EnvPanel {
 
         Panel block = panel(SidePanels.title(SidePanels.Side.ENV, countLabel(total, entries.size())), body)
                 .rounded()
-                .id(PanelIds.ENV).focusable(ctx.modalOpen())
+                .id(PanelIds.ENV).focusable(ctx.noModalOpen())
                 .borderColor(ctx.theme().idle())
                 .focusedBorderColor(ctx.theme().focus())
                 .onKeyEvent(event -> handleKey(event, entries));

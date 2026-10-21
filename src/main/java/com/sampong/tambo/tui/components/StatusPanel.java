@@ -44,7 +44,7 @@ public final class StatusPanel {
     public Panel build() {
         return panel(SidePanels.title(SidePanels.Side.STATUS, ""),
                 column(rows().toArray(new Element[0])))
-                .id(PanelIds.STATUS).focusable(ctx.modalOpen())
+                .id(PanelIds.STATUS).focusable(ctx.noModalOpen())
                 .rounded()
                 .borderColor(ctx.theme().idle())
                 .focusedBorderColor(ctx.theme().focus());
@@ -91,7 +91,7 @@ public final class StatusPanel {
 
         if (ctx.supports(BackendFeature.TRUST)) {
             rows.add(badgeRow(label("trust"), ctx.state().trustLazy().everLoaded(),
-                    ctx.state().allTrusted(), "  press T to trust"));
+                    ctx.state().allTrusted(), "  Space t to trust"));
         }
         return rows;
     }

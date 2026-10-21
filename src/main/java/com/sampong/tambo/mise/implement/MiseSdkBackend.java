@@ -18,6 +18,7 @@ import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo._common.model.SdkRelease;
 import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.model.TrustState;
+import com.sampong.tambo._common.service.ProgressParser;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 import com.sampong.tambo.mise.MiseMaintenanceService;
 import com.sampong.tambo.mise.MiseQueryService;
@@ -87,6 +88,11 @@ public class MiseSdkBackend implements SdkVersionBackend {
         return configDir != null && !configDir.isBlank()
                 ? Path.of(configDir, "config.toml")
                 : Path.of(System.getProperty("user.home"), ".config", "mise", "config.toml");
+    }
+
+    @Override
+    public ProgressParser progressParser() {
+        return MiseProgressParser.INSTANCE;
     }
 
     /** {@code mise plugins uninstall} drops the plugin but leaves installed versions on disk. */
@@ -164,6 +170,16 @@ public class MiseSdkBackend implements SdkVersionBackend {
         return tools.upgrade(sdk, onLine, cancelKey);
     }
 
+    @Override
+    public CliResult installAll(Consumer<String> onLine, String cancelKey) {
+        return tools.exec(List.of("install"), onLine, cancelKey);
+    }
+
+    @Override
+    public CliResult exec(List<String> args, Consumer<String> onLine, String cancelKey) {
+        return tools.exec(args, onLine, cancelKey);
+    }
+
     // ==================== Project operations ====================
 
     @Override
@@ -196,5 +212,10 @@ public class MiseSdkBackend implements SdkVersionBackend {
     @Override
     public CliResult selfUpdate(Consumer<String> onLine) {
         return maintenance.selfUpdate(onLine);
+    }
+
+    @Override
+    public CliResult clearCache(Consumer<String> onLine) {
+        return tools.exec(List.of("cache", "clear"), onLine, "cache-clear");
     }
 }

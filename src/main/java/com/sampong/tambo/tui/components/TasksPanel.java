@@ -112,7 +112,7 @@ public final class TasksPanel {
 
         Panel block = panel(SidePanels.title(SidePanels.Side.TASKS, countLabel(total, items.size())), body)
                 .rounded()
-                .id(PanelIds.TASKS).focusable(ctx.modalOpen())
+                .id(PanelIds.TASKS).focusable(ctx.noModalOpen())
                 .borderColor(ctx.theme().idle())
                 .focusedBorderColor(ctx.theme().focus())
                 .onKeyEvent(event -> handleKey(event, items));
@@ -164,7 +164,8 @@ public final class TasksPanel {
             ctx.actions().runTask(task);
             return EventResult.HANDLED;
         }
-        if (event.isChar(':')) {
+        if (event.isChar('>')) {
+            // '>' rather than ':' — ':' is the mise command line everywhere, Tasks included.
             ctx.promptTaskArgs(task.name(), "");
             return EventResult.HANDLED;
         }

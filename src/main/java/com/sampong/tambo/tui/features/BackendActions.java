@@ -1,12 +1,13 @@
 package com.sampong.tambo.tui.features;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -16,12 +17,17 @@ import org.springframework.core.task.AsyncTaskExecutor;
 import com.sampong.tambo._common.base.CancelRegistry;
 import com.sampong.tambo._common.model.BackendFeature;
 import com.sampong.tambo._common.model.CliResult;
+import com.sampong.tambo._common.model.InstallProgress;
 import com.sampong.tambo._common.model.OutdatedSdk;
 import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo._common.model.SdkRelease;
 import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo._common.service.ProgressParser;
 import com.sampong.tambo._common.service.SdkVersionBackend;
+import com.sampong.tambo._common.util.AtomicFileWriter;
 import com.sampong.tambo.mise.ShellActivationService;
+import com.sampong.tambo.tui.state.Job;
+import com.sampong.tambo.tui.state.JobTracker;
 import com.sampong.tambo.tui.state.Lazy;
 import com.sampong.tambo.tui.state.LogLevel;
 import com.sampong.tambo.tui.state.UiState;
@@ -45,6 +51,12 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public final class BackendActions {
 
+    /**
+     * Busy key of "upgrade every outdated SDK". Public so the Tools panel can find each tool's
+     * bar inside it — that one operation reports progress for several tools at once.
+     */
+    public static final String UPGRADE_ALL_KEY = "upgrade:*";
+
     @NonNull
     private final SdkVersionBackend backend;
     /**
@@ -63,9 +75,31 @@ public final class BackendActions {
     /** Marshals a runnable onto the TUI render thread. */
     @NonNull
     private final Consumer<Runnable> uiThread;
+    /**
+     * Downloads run {@link JobTracker#CONCURRENCY} at a time and the rest wait their turn —
+     * mason.nvim's queue. Marking ten tools and pressing U should not open ten connections and
+     * leave every bar crawling; two finish sooner than ten that all finish last.
+     */
+    private final Semaphore downloadSlots = new Semaphore(JobTracker.CONCURRENCY, true);
+    /**
+     * Jobs cancelled while still queued. Their worker thread is parked on {@link #downloadSlots}
+     * with no process to kill yet, so it checks here once it gets a slot and gives it straight
+     * back. Concurrent: written on the render thread, read on the worker.
+     */
+    private final Set<Long> cancelledWhileQueued = ConcurrentHashMap.newKeySet();
 
     public SdkVersionBackend backend() {
         return backend;
+    }
+
+    /** Every config change this session made, for {@code z}/{@code Z}. */
+    public ConfigHistory history() {
+        return state.history();
+    }
+
+    /** Installs, upgrades and the like, for the {@code w} jobs view. */
+    public JobTracker jobs() {
+        return state.jobs();
     }
 
     // ==================== Loading / refresh ====================
@@ -103,7 +137,10 @@ public final class BackendActions {
      */
     private void loadEssentials() {
         loadLazy(state.sdksLazy(), "sdks", backend::listSdks,
-                loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tools"));
+                loaded -> {
+                    state.loadedAt(java.time.LocalTime.now());
+                    state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tools");
+                });
         if (backend.supports(BackendFeature.TASKS)) {
             loadLazy(state.tasksLazy(), "tasks", backend::listTasks,
                     loaded -> state.addLog(LogLevel.OK, "Loaded " + loaded.size() + " tasks"));
@@ -192,34 +229,44 @@ public final class BackendActions {
     // ==================== SDK operations ====================
 
     public void installSdk(@NonNull SdkVersion sdk) {
+        install(sdk.label());
+    }
+
+    /**
+     * Installs {@code sdkAtVersion} without pinning it anywhere — for a version picked from the
+     * Versions column, which has no {@link SdkVersion} row until it is installed.
+     */
+    public void install(@NonNull String sdkAtVersion) {
         if (blockedOffline("installing")) {
             return;
         }
-        String key = sdk.label();
-        if (state.markBusy(key)) {
+        String key = sdkAtVersion;
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " install " + key);
-        submitBackground("install " + key, key,
-                () -> backend.install(key, liveLogLine(key), key),
+        submitJob("install " + key, key,
+                () -> backend.install(key, liveProgressLine(key), key),
                 result -> {
                     logResult(result, "Installed " + key, "Install failed: " + key);
                     refresh();
-                });
+                },
+                true, () -> install(sdkAtVersion));
     }
 
     public void uninstallSdk(@NonNull SdkVersion sdk) {
         String key = sdk.label();
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " uninstall " + key);
-        submitBackground("uninstall " + key, key,
+        submitJob("uninstall " + key, key,
                 () -> backend.uninstall(key),
                 result -> {
                     logResult(result, "Uninstalled " + key, "Uninstall failed: " + key);
                     refresh();
-                });
+                },
+                false, () -> uninstallSdk(sdk));
     }
 
     /**
@@ -229,16 +276,17 @@ public final class BackendActions {
      */
     public void removeSdk(@NonNull SdkVersion sdk) {
         String key = sdk.label();
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " unuse " + key);
-        submitBackground("remove " + key, key,
-                () -> backend.remove(key),
+        submitJob("remove " + key, key,
+                withUndo(() -> backend.remove(key)),
                 result -> {
                     logResult(result, "Removed " + key, "Remove failed: " + key);
                     refresh();
-                });
+                },
+                false, () -> removeSdk(sdk));
     }
 
     /**
@@ -248,16 +296,17 @@ public final class BackendActions {
     public void removePlugin(@NonNull SdkVersion sdk) {
         String plugin = sdk.name();
         String key = "remove-plugin:" + plugin;
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " remove plugin " + plugin);
-        submitBackground("remove plugin " + plugin, key,
+        submitJob("remove plugin " + plugin, key,
                 () -> backend.removePlugin(plugin),
                 result -> {
                     logResult(result, "Removed plugin " + plugin, "Remove plugin failed: " + plugin);
                     refresh();
-                });
+                },
+                false, () -> removePlugin(sdk));
     }
 
     /** Installs and pins {@code sdk@version} at project or global scope. */
@@ -273,20 +322,21 @@ public final class BackendActions {
                 ? sdkAtVersion.substring(0, sdkAtVersion.indexOf('@'))
                 : sdkAtVersion;
         String key = "registry:" + shortName;
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         String args = backend.name() + " use " + (global ? "-g " : "") + sdkAtVersion;
         state.addLog(LogLevel.CMD, "$ " + args);
-        submitBackground(args, key,
-                () -> backend.use(sdkAtVersion, global, liveLogLine(key), key),
+        submitJob(args, key,
+                withUndo(() -> backend.use(sdkAtVersion, global, liveProgressLine(key), key)),
                 result -> {
                     logResult(result,
                             global ? "Set " + sdkAtVersion + " as global default"
                                     : "Applied " + sdkAtVersion + " at project scope",
                             "Failed: " + args);
                     refresh();
-                });
+                },
+                true, () -> useSdk(sdkAtVersion, global));
     }
 
     /** Upgrades a single SDK to the newest version its config allows, then refreshes. */
@@ -295,16 +345,17 @@ public final class BackendActions {
             return;
         }
         String key = "upgrade:" + sdk.name();
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " upgrade " + sdk.name());
-        submitBackground("upgrade " + sdk.name(), key,
-                () -> backend.upgrade(sdk.name(), liveLogLine(key), key),
+        submitJob("upgrade " + sdk.name(), key,
+                withUndo(() -> backend.upgrade(sdk.name(), liveProgressLine(key), key)),
                 result -> {
                     logResult(result, "Upgraded " + sdk.name(), "Upgrade failed: " + sdk.name());
                     refresh();
-                });
+                },
+                true, () -> upgradeSdk(sdk));
     }
 
     /** Upgrades every outdated SDK, then refreshes. */
@@ -312,17 +363,18 @@ public final class BackendActions {
         if (refuseUnsupported(BackendFeature.UPGRADE) || blockedOffline("upgrading")) {
             return;
         }
-        String key = "upgrade:*";
-        if (state.markBusy(key)) {
+        String key = UPGRADE_ALL_KEY;
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " upgrade");
-        submitBackground("upgrade all", key,
-                () -> backend.upgrade("", liveLogLine(key), key),
+        submitJob("upgrade all", key,
+                withUndo(() -> backend.upgrade("", liveProgressLine(key), key)),
                 result -> {
                     logResult(result, "Upgraded all outdated tools", "Upgrade failed");
                     refresh();
-                });
+                },
+                true, this::upgradeAll);
     }
 
     // ==================== Cancellation ====================
@@ -348,6 +400,13 @@ public final class BackendActions {
      * guess which one was meant; {@link #cancelAll()} handles that case.
      */
     private void cancelFirst(String message, String... keys) {
+        for (String key : keys) {
+            Job queued = state.jobs().activeFor(key);
+            if (queued != null && queued.state() == Job.State.QUEUED) {
+                cancelJob(queued);
+                return;
+            }
+        }
         for (String key : keys) {
             if (cancelRegistry.cancel(key)) {
                 state.addLog(LogLevel.INFO, message);
@@ -375,8 +434,32 @@ public final class BackendActions {
         }
     }
 
+    /**
+     * Stops one job from the jobs view: kills its process when it is running, or takes it out of
+     * the queue before it ever starts.
+     */
+    public void cancelJob(@NonNull Job job) {
+        if (job.state() == Job.State.QUEUED) {
+            cancelledWhileQueued.add(job.id());
+            state.jobs().cancelled(job.id());
+            state.clearBusy(job.busyKey());
+            state.addLog(LogLevel.INFO, "Removed from the queue: " + job.label());
+        } else if (job.state() == Job.State.RUNNING) {
+            // Marked first, so the failed result the killed process reports is not recorded
+            // over it as a failure.
+            state.jobs().cancelled(job.id());
+            cancelRegistry.cancel(job.busyKey());
+            state.addLog(LogLevel.INFO, "Cancelled " + job.label());
+        }
+    }
+
     /** Kills every in-flight operation, whatever surface or selection is active. */
     public void cancelAll() {
+        for (Job job : state.jobs().ordered()) {
+            if (job.state() == Job.State.QUEUED) {
+                cancelJob(job);
+            }
+        }
         Set<String> cancelled = cancelRegistry.cancelAll();
         if (cancelled.isEmpty()) {
             state.addLog(LogLevel.INFO, "Nothing running to cancel");
@@ -399,7 +482,7 @@ public final class BackendActions {
             return;
         }
         String key = "task:" + taskName;
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.lastTaskName(taskName);
@@ -429,7 +512,7 @@ public final class BackendActions {
     /** Installs the backend's activation line into the user's shell startup file. */
     public void activateShell() {
         String key = "activate";
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name()
@@ -449,7 +532,7 @@ public final class BackendActions {
             return;
         }
         String key = "trust";
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " trust");
@@ -470,7 +553,7 @@ public final class BackendActions {
             return;
         }
         String key = "doctor";
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " doctor");
@@ -491,7 +574,7 @@ public final class BackendActions {
             return;
         }
         String key = "prune";
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " prune");
@@ -501,6 +584,78 @@ public final class BackendActions {
                     logResult(result, "Pruned unused tool versions", "Prune failed");
                     refresh();
                 });
+    }
+
+    /** Installs every tool the project config lists but the machine does not have yet. */
+    public void installAll() {
+        if (refuseUnsupported(BackendFeature.INSTALL_ALL) || blockedOffline("installing")) {
+            return;
+        }
+        String key = "install:*";
+        if (!state.tryMarkBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " install");
+        submitJob("install all", key,
+                () -> backend.installAll(liveProgressLine(key), key),
+                result -> {
+                    logResult(result, "Installed everything in the config", "Install failed");
+                    refresh();
+                },
+                true, this::installAll);
+    }
+
+    /** Empties the download cache — the fix for a download that keeps failing its checksum. */
+    public void clearCache() {
+        if (refuseUnsupported(BackendFeature.CACHE_CLEAR)) {
+            return;
+        }
+        String key = "cache-clear";
+        if (!state.tryMarkBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " cache clear");
+        submitBackground("cache clear", key,
+                () -> backend.clearCache(liveLogLine(key)),
+                result -> logResult(result, "Download cache cleared", "Cache clear failed"));
+    }
+
+    /**
+     * Asks the backend again which tools are outdated, instead of waiting for the next refresh.
+     * The answer is cached for the session, so without this a release published while tambo is
+     * open would never show its arrow.
+     */
+    public void checkForUpdates() {
+        if (refuseUnsupported(BackendFeature.UPGRADE) || blockedOffline("checking for updates")) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " outdated");
+        state.outdatedLazy().invalidate();
+        ensureOutdated();
+    }
+
+    /**
+     * Runs a command typed on the {@code :} line, verbatim, with its output streamed into the
+     * command log. Refreshes afterwards because a raw command can change anything.
+     */
+    public void exec(@NonNull List<String> args) {
+        if (args.isEmpty()) {
+            return;
+        }
+        String line = String.join(" ", args);
+        String key = "exec:" + line;
+        if (!state.tryMarkBusy(key)) {
+            return;
+        }
+        state.addLog(LogLevel.CMD, "$ " + backend.name() + " " + line);
+        submitJob(backend.name() + " " + line, key,
+                withUndo(() -> backend.exec(args, liveProgressLine(key), key)),
+                result -> {
+                    logResult(result, backend.name() + " " + line + " — done",
+                            backend.name() + " " + line + " failed");
+                    refresh();
+                },
+                true, () -> exec(args));
     }
 
     /**
@@ -531,7 +686,7 @@ public final class BackendActions {
             return;
         }
         String key = "self-update";
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " self-update");
@@ -558,25 +713,25 @@ public final class BackendActions {
 
     // ==================== Config files ====================
 
-    /** Writes edited config content to disk, then refreshes so the backend picks it up. */
+    /**
+     * Writes edited config content to disk atomically — the file is either the old contents or
+     * the new, never truncated — then refreshes so the backend picks it up.
+     */
     public void saveConfig(@NonNull Path file, @NonNull String content) {
         String key = "save:" + file;
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "Saving " + file + "…");
         submitBackground("save " + file, key,
-                () -> {
+                withUndo(() -> {
                     try {
-                        if (file.getParent() != null) {
-                            Files.createDirectories(file.getParent());
-                        }
-                        Files.writeString(file, content);
+                        AtomicFileWriter.writeString(file, content);
                         return "";
                     } catch (IOException e) {
                         return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                     }
-                },
+                }, file),
                 error -> {
                     if (error.isEmpty()) {
                         state.addLog(LogLevel.OK, "Saved " + file);
@@ -648,7 +803,7 @@ public final class BackendActions {
         }
         List<String> args = List.of(trimmed.split("\\s+"));
         String key = "add-plugin:" + args.getFirst();
-        if (state.markBusy(key)) {
+        if (!state.tryMarkBusy(key)) {
             return;
         }
         state.addLog(LogLevel.CMD, "$ " + backend.name() + " add " + trimmed);
@@ -659,6 +814,71 @@ public final class BackendActions {
                             "Add plugin failed: " + args.getFirst());
                     refresh();
                 });
+    }
+
+    // ==================== Undo ====================
+
+    /** {@code z}: puts the config file back the way it was before the last change tambo made. */
+    public void undo() {
+        applyHistory(state.history().undo());
+    }
+
+    /** {@code Z}: re-applies the change {@link #undo()} last took back. */
+    public void redo() {
+        applyHistory(state.history().redo());
+    }
+
+    private void applyHistory(ConfigHistory.Result result) {
+        state.addLog(result.ok() ? LogLevel.OK : LogLevel.INFO, result.message());
+        if (result.ok()) {
+            state.toast(result.message(), false);
+            refresh();
+        }
+    }
+
+    /**
+     * The config files an operation can rewrite: the project file always, and the user-level
+     * one where the backend has it — {@code use -g}, {@code unuse} and {@code upgrade} can all
+     * land in either, and only reading both before and after tells which one actually changed.
+     */
+    private List<Path> configFiles() {
+        Path global = backend.globalConfigPath();
+        Path project = Path.of(backend.projectConfigFileName());
+        return global == null ? List.of(project) : List.of(project, global);
+    }
+
+    private <T> Supplier<T> withUndo(Supplier<T> work) {
+        return withUndo(work, configFiles().toArray(new Path[0]));
+    }
+
+    /**
+     * Wraps {@code work} between two reads of {@code files} so the change it makes can be undone.
+     * Both reads run on the worker thread, next to the CLI call, so the render thread never
+     * touches the disk for this; only the recording crosses over, and it is queued before the
+     * operation's own result, so the "z undo" hint is already true when the result is logged.
+     */
+    private <T> Supplier<T> withUndo(Supplier<T> work, Path... files) {
+        return () -> {
+            Map<Path, @Nullable String> before = new HashMap<>();
+            for (Path file : files) {
+                before.put(file, ConfigHistory.read(file));
+            }
+            T result = work.get();
+            Map<Path, @Nullable String> after = new HashMap<>();
+            for (Path file : files) {
+                after.put(file, ConfigHistory.read(file));
+            }
+            uiThread.accept(() -> {
+                for (Path file : files) {
+                    String scope = file.equals(backend.globalConfigPath()) ? "global" : file.getFileName().toString();
+                    if (state.history().record(file, scope, before.get(file), after.get(file))) {
+                        ConfigHistory.Change change = state.history().recent(1).getFirst();
+                        state.toast(change.summary() + " in " + scope, true);
+                    }
+                }
+            });
+            return result;
+        };
     }
 
     // ==================== Plumbing ====================
@@ -686,14 +906,71 @@ public final class BackendActions {
      */
     private Consumer<String> liveLogLine(String busyKey) {
         String tag = "[" + sourceLabel(busyKey) + "] ";
+        RenderBatcher<String> toLog = new RenderBatcher<>(uiThread, line -> {
+            state.addLog(LogLevel.INFO, tag + line);
+            state.busyStatus(busyKey, line);
+            jobOutput(busyKey, line);
+        });
         return line -> {
             if (!line.isBlank()) {
-                uiThread.accept(() -> {
-                    state.addLog(LogLevel.INFO, tag + line);
-                    state.busyStatus(busyKey, line);
-                });
+                toLog.accept(line);
             }
         };
+    }
+
+    /**
+     * Like {@link #liveLogLine} but for install / use / upgrade, whose output is mostly progress
+     * frames: lines the backend's {@link ProgressParser} recognises update the operation's
+     * progress instead of the log, so a download draws one animated bar rather than writing
+     * hundreds of near-identical log lines (vfox redraws its bar per percent). The first frame
+     * of each phase is still logged, which keeps a readable trail of what the install did.
+     * Lines it does not recognise are handled exactly as {@link #liveLogLine} would.
+     * <p>
+     * Parsing happens here on the reader thread; only the result crosses to the render thread.
+     */
+    private Consumer<String> liveProgressLine(String busyKey) {
+        ProgressParser parser = backend.progressParser();
+        String defaultSubject = progressSubject(busyKey);
+        String tag = "[" + sourceLabel(busyKey) + "] ";
+        RenderBatcher<StreamedLine> toUi = new RenderBatcher<>(uiThread, streamed -> {
+            InstallProgress progress = streamed.progress();
+            if (progress == null) {
+                state.addLog(LogLevel.INFO, tag + streamed.line());
+                state.busyStatus(busyKey, streamed.line());
+                jobOutput(busyKey, streamed.line());
+                return;
+            }
+            String subject = progress.tool() != null ? progress.tool() : defaultSubject;
+            if (state.progress(busyKey, subject, progress)) {
+                state.addLog(LogLevel.INFO, tag + streamed.line().strip());
+                jobOutput(busyKey, streamed.line().strip());
+            }
+        });
+        return line -> {
+            if (line.isBlank() || parser.isNoise(line)) {
+                return;
+            }
+            toUi.accept(new StreamedLine(line, parser.parse(line)));
+        };
+    }
+
+    /** One output line and, when the backend's parser recognised it, the progress it reports. */
+    private record StreamedLine(String line, @Nullable InstallProgress progress) {
+    }
+
+    /**
+     * What a progress line that names no tool is about: the SDK the operation was started for,
+     * i.e. its busy key without the operation prefix ({@code registry:nodejs} → {@code nodejs}).
+     * Only the prefixes this class adds are stripped — a mise label such as
+     * {@code aqua:cli/cli@2.0} keeps its own colon.
+     */
+    private static String progressSubject(String busyKey) {
+        for (String prefix : new String[]{"registry:", "upgrade:"}) {
+            if (busyKey.startsWith(prefix)) {
+                return busyKey.substring(prefix.length());
+            }
+        }
+        return busyKey;
     }
 
     /** Derives a short, human-readable source tag from an operation's busy key. */
@@ -711,7 +988,84 @@ public final class BackendActions {
         if (busyKey.startsWith("save:")) {
             return "save";
         }
+        if (busyKey.startsWith("exec:")) {
+            return busyKey.substring("exec:".length());
+        }
         return busyKey;
+    }
+
+    /** Appends a streamed line to the output of the job running under {@code busyKey}, if any. */
+    private void jobOutput(String busyKey, String line) {
+        Job job = state.jobs().activeFor(busyKey);
+        if (job != null) {
+            state.jobs().output(job.id(), line);
+        }
+    }
+
+    /**
+     * {@link #submitBackground(String, String, Supplier, Consumer)} for an operation worth a row
+     * in the jobs view: it is queued there straight away, marked running once it actually starts,
+     * and left behind as done or failed — a failure keeping its output and a {@code retry} that
+     * simply calls the action again.
+     *
+     * @param throttled true for anything that downloads, which waits for one of the
+     *                  {@link #downloadSlots}; uninstalls and config edits start immediately
+     */
+    private void submitJob(String label, String busyKey, Supplier<CliResult> work,
+                           Consumer<CliResult> onDone, boolean throttled, Runnable retry) {
+        String command = "$ " + (label.startsWith(backend.name() + " ") ? label : backend.name() + " " + label);
+        long id = state.jobs().submit(label, command, busyKey, retry).id();
+        executor.execute(() -> {
+            if (throttled) {
+                try {
+                    downloadSlots.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    uiThread.accept(() -> {
+                        state.clearBusy(busyKey);
+                        state.jobs().cancelled(id);
+                    });
+                    return;
+                }
+            }
+            try {
+                if (cancelledWhileQueued.remove(id)) {
+                    return; // cancelled while waiting: the render thread already cleaned up
+                }
+                uiThread.accept(() -> state.jobs().start(id));
+                CliResult result;
+                try {
+                    result = work.get();
+                } catch (RuntimeException e) {
+                    String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    uiThread.accept(() -> {
+                        state.clearBusy(busyKey);
+                        finishJob(id, false, message);
+                        state.addLog(LogLevel.ERROR, label + " failed: " + message);
+                    });
+                    return;
+                }
+                uiThread.accept(() -> {
+                    state.clearBusy(busyKey);
+                    String summary = result.summaryLine();
+                    finishJob(id, result.ok(), result.ok() ? null
+                            : summary.isBlank() ? "exit code " + result.exitCode() : summary);
+                    onDone.accept(result);
+                });
+            } finally {
+                if (throttled) {
+                    downloadSlots.release();
+                }
+            }
+        });
+    }
+
+    /** Records a job's outcome, unless it was cancelled meanwhile — the kill is the outcome then. */
+    private void finishJob(long id, boolean ok, @Nullable String error) {
+        Job job = state.jobs().get(id);
+        if (job != null && job.state() != Job.State.CANCELLED) {
+            state.jobs().finish(id, ok, null, error);
+        }
     }
 
     private <T> void submitBackground(String label, Supplier<T> work, Consumer<T> onDone) {
@@ -731,7 +1085,7 @@ public final class BackendActions {
      * Like {@link #submitBackground(String, Supplier, Consumer)} but also clears {@code busyKey}
      * before invoking the callback — including on the exception path, which the plain overload
      * leaves marked busy forever since nothing else would clear it. Every action that calls
-     * {@link UiState#markBusy} up front must release it through this overload.
+     * {@link UiState#tryMarkBusy} up front must release it through this overload.
      */
     private <T> void submitBackground(String label, String busyKey, Supplier<T> work, Consumer<T> onDone) {
         executor.execute(() -> {

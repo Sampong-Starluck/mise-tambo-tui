@@ -12,5 +12,12 @@ spring:
       enabled: true
 
 logging:
+  # The terminal belongs to the TUI: a console appender would print any WARN/ERROR straight
+  # over the panels. Log to a file beside tambo.properties instead (same TAMBO_CONFIG_DIR
+  # override TamboConfig honours).
+  console:
+    enabled: false
+  file:
+    name: ${TAMBO_CONFIG_DIR:${user.home}/.config/tambo}/tambo.log
   level:
     root: warn

@@ -1,0 +1,6 @@
+bun -> N/A 
+gradle -> N/A 
+java -> [92mv25.0.4+7-tem[0m
+maven -> [92mv4.0.0-rc-6[0m
+nodejs -> [92mv26.6.0[0m
+python -> [92mv3.14.6[0m

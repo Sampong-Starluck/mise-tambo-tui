@@ -22,6 +22,7 @@ import com.sampong.tambo._common.model.CatalogEntry;
 import com.sampong.tambo._common.model.CliResult;
 import com.sampong.tambo._common.model.SdkRelease;
 import com.sampong.tambo._common.model.SdkVersion;
+import com.sampong.tambo._common.service.ProgressParser;
 import com.sampong.tambo._common.service.SdkVersionBackend;
 
 import lombok.NonNull;
@@ -125,6 +126,12 @@ public class VfoxSdkBackend implements SdkVersionBackend {
                     + "than an editable config file. Use g to set a global default instead.";
             default -> "vfox does not support this.";
         };
+    }
+
+    @Override
+    @NullMarked
+    public ProgressParser progressParser() {
+        return VfoxProgressParser.INSTANCE;
     }
 
     /** {@code vfox remove} deletes every installed version of the SDK along with the plugin. */
@@ -378,6 +385,12 @@ public class VfoxSdkBackend implements SdkVersionBackend {
     @NullMarked
     public CliResult selfUpdate(Consumer<String> onLine) {
         return cli.runStreaming(List.of("upgrade"), SELF_UPDATE_TIMEOUT, onLine, "vfox-self-update");
+    }
+
+    @Override
+    @NullMarked
+    public CliResult exec(List<String> args, Consumer<String> onLine, String cancelKey) {
+        return cli.runStreaming(args, INSTALL_TIMEOUT, onLine, cancelKey);
     }
 
     private static String sdkName(String sdkAtVersion) {

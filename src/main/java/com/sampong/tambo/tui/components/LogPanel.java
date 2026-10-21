@@ -66,7 +66,7 @@ public final class LogPanel {
 
         ListElement<?> list = list()
                 .title(" [5] Command Log" + (offset > 0 ? " →" + offset : "") + " ")
-                .rounded().id(PanelIds.LOG).focusable(ctx.modalOpen())
+                .rounded().id(PanelIds.LOG).focusable(ctx.noModalOpen())
                 .borderColor(focused ? ctx.theme().focus() : ctx.theme().idle())
                 .scrollbar(ScrollBarPolicy.AS_NEEDED)
                 .displayOnly().autoScroll()

@@ -26,7 +26,7 @@ import lombok.RequiredArgsConstructor;
  * Owns all of its own state — the rest of the app only asks {@link #isOpen()}.
  */
 @RequiredArgsConstructor
-public final class TaskArgsModal {
+public final class TaskArgsModal implements Modal {
 
     private static final int WIDTH = 72;
 

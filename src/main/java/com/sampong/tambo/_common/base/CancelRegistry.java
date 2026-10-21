@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
 
 import lombok.NonNull;
@@ -14,13 +15,19 @@ import lombok.NonNull;
  * by the caller's operation key (the same key {@code UiState} uses to mark the
  * operation busy). Lets the UI kill a long-running install/task on demand.
  * <p>
+ * Also tracks, unkeyed, every other subprocess in flight — the short blocking calls
+ * ({@code ls}, {@code uninstall}, {@code ls-remote}, …) that the user has no key to cancel —
+ * so that {@link #destroy()} can take both kinds down when the app exits. Without that, quitting
+ * mid-task left {@code mise run dev} or an install running orphaned after the TUI was gone.
+ * <p>
  * Thread-safe: processes are registered on the reader/worker threads and
  * cancelled from the render thread.
  */
 @Component
-public class CancelRegistry {
+public class CancelRegistry implements DisposableBean {
 
     private final Map<String, Process> running = new ConcurrentHashMap<>();
+    private final Set<Process> unkeyed = ConcurrentHashMap.newKeySet();
 
     public void register(@NonNull String key, @NonNull Process process) {
         running.put(key, process);
@@ -28,6 +35,15 @@ public class CancelRegistry {
 
     public void deregister(@NonNull String key) {
         running.remove(key);
+    }
+
+    /** Records a process with no cancel key, so it is still killed on exit; see {@link #destroy()}. */
+    public void track(@NonNull Process process) {
+        unkeyed.add(process);
+    }
+
+    public void untrack(@NonNull Process process) {
+        unkeyed.remove(process);
     }
 
     /** True when an operation under {@code key} is currently cancellable. */
@@ -73,9 +89,27 @@ public class CancelRegistry {
         if (process == null) {
             return false;
         }
+        kill(process);
+        return true;
+    }
+
+    /**
+     * Kills every subprocess still running, keyed or not, when the Spring context closes —
+     * which happens right after the TUI quits ({@code SpringApplication.exit}) and on
+     * SIGTERM / Ctrl+C via Spring's shutdown hook.
+     */
+    @Override
+    public void destroy() {
+        cancelAll();
+        for (Process process : unkeyed) {
+            kill(process);
+        }
+        unkeyed.clear();
+    }
+
+    private static void kill(Process process) {
         process.descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroy();
         process.destroyForcibly();
-        return true;
     }
 }

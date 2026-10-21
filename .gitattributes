@@ -1,2 +1,4 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+# Captured CLI output: the exact bytes (bare \r progress redraws, ANSI escapes) are the test input.
+src/test/resources/fixtures/** -text

@@ -41,7 +41,11 @@ public enum BackendFeature {
      * that is not installed yet, so there pinning stays a separate action afterwards. This is
      * what decides whether the version browser offers a project/global choice at all.
      */
-    PIN_ON_INSTALL;
+    PIN_ON_INSTALL,
+    /** Installing every tool the active config lists, in one command. mise only. */
+    INSTALL_ALL,
+    /** Clearing the backend's download cache. mise only. */
+    CACHE_CLEAR;
 
     /**
      * A short phrase naming the capability in the user's terms, for the backend report the
@@ -63,6 +67,8 @@ public enum BackendFeature {
             case CONFIG_VALIDATE -> "re-check the config for errors";
             case GLOBAL_CONFIG -> "edit a user-level config";
             case PIN_ON_INSTALL -> "install and pin in one step";
+            case INSTALL_ALL -> "install everything in the config";
+            case CACHE_CLEAR -> "clear its download cache";
         };
     }
 }

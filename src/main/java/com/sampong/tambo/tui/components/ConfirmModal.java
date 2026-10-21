@@ -25,7 +25,7 @@ import lombok.RequiredArgsConstructor;
  * global handler in {@code MiseTuiApp} rather than an {@code onKeyEvent}.
  */
 @RequiredArgsConstructor
-public final class ConfirmModal {
+public final class ConfirmModal implements Modal {
 
     private static final int WIDTH = 60;
 

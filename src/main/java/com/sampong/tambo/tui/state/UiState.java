@@ -1,8 +1,10 @@
 package com.sampong.tambo.tui.state;
 
+import java.time.LocalTime;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -10,10 +12,12 @@ import java.util.Set;
 
 import com.sampong.tambo._common.model.BackendInfo;
 import com.sampong.tambo._common.model.CatalogEntry;
+import com.sampong.tambo._common.model.InstallProgress;
 import com.sampong.tambo._common.model.ProjectTask;
 import com.sampong.tambo._common.model.SdkVersion;
 import com.sampong.tambo._common.model.TrustState;
 import com.sampong.tambo._common.service.SdkVersionBackend;
+import com.sampong.tambo.tui.features.ConfigHistory;
 
 import org.jspecify.annotations.Nullable;
 
@@ -70,13 +74,6 @@ public final class UiState {
      * from then on the U key explains instead of running and drops out of the footer and help.
      */
     private boolean selfUpdateDisabled = false;
-    /**
-     * Set at startup from {@code --advanced-features}, and toggleable in-app with {@code V}.
-     * Gates the maintenance/config keys and shows the
-     * {@link com.sampong.tambo.tui.components.AdvancedPanel} that lists them — off by default
-     * so a new user's keyboard surface starts small.
-     */
-    private boolean advancedFeatures = false;
 
     /**
      * The version manager this session is driving, resolved by {@code AppLifecycle} before the
@@ -101,6 +98,51 @@ public final class UiState {
     @Getter(AccessLevel.NONE)
     @Setter(AccessLevel.NONE)
     private final Map<String, String> busyStatus = new java.util.HashMap<>();
+
+    /**
+     * The latest parsed download progress per in-flight operation, and within it per tool —
+     * one operation can install several ({@code mise upgrade} with no argument), each with its
+     * own bar. Insertion-ordered both ways, so "the first" is the oldest.
+     */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final Map<String, Map<String, ProgressSnapshot>> progress = new java.util.LinkedHashMap<>();
+
+    /**
+     * Tool names marked with {@code m} for a batch action — yazi's selection. Names rather than
+     * row indexes, so a mark survives the list being filtered, re-sorted or refreshed.
+     */
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private final Set<String> marked = new LinkedHashSet<>();
+
+    /** Midnight Commander mode: a menu bar on top and an F-key bar at the bottom. {@code Space m}. */
+    private boolean beginnerMode = false;
+    /** Ctrl+O: panel titles show jump labels and the next key picks one. */
+    private boolean jumpMode = false;
+    /** {@code +} in Tools: the table takes the whole body, with latest/where columns. */
+    private boolean toolsFullScreen = false;
+    /** {@code o} in Tools: only rows with a newer version available. */
+    private boolean outdatedOnly = false;
+    /**
+     * On a terminal too narrow for columns side by side, the detail pane replaces the Versions
+     * column after Enter, k9s-style, until Esc goes back.
+     */
+    private boolean narrowDetail = false;
+    /**
+     * When the tool list last loaded, for the offline banner's "showing data from 12:01" —
+     * stale data is still worth showing, as long as it says how stale.
+     */
+    private @Nullable LocalTime loadedAt;
+
+    /**
+     * Installs, upgrades and the like, for the {@code w} jobs view. Here rather than in the
+     * actions layer because that is rebuilt when the backend is picked, and the jobs view holds
+     * on to this from the first frame.
+     */
+    private final JobTracker jobs = new JobTracker();
+    /** Every config change this session made, for {@code z}/{@code Z}. */
+    private final ConfigHistory history = new ConfigHistory();
 
     /** Exposed only through {@link #log()} (read-only) and {@link #addLog}, never a raw setter. */
     @Getter(AccessLevel.NONE)
@@ -199,14 +241,20 @@ public final class UiState {
 
     // ==================== Busy tracking ====================
 
-    /** Marks an operation as in-flight; returns false when it already is. */
-    public boolean markBusy(String key) {
-        return !busyKeys.add(key);
+    /**
+     * Marks an operation as in-flight.
+     *
+     * @return true when it was idle and is now marked; false when it was already running, in
+     *         which case the caller must not start it a second time
+     */
+    public boolean tryMarkBusy(String key) {
+        return busyKeys.add(key);
     }
 
     public void clearBusy(String key) {
         busyKeys.remove(key);
         busyStatus.remove(key);
+        progress.remove(key);
     }
 
     public boolean isBusy(String key) {
@@ -231,6 +279,123 @@ public final class UiState {
     /** The newest output line for {@code key}, or null when there is none yet. */
     public @Nullable String busyStatusFor(String key) {
         return busyStatus.get(key);
+    }
+
+    /**
+     * Records a progress reading about {@code subject} (a {@code tool@version}) within the
+     * in-flight operation {@code key}.
+     *
+     * @return true when it starts a new phase for that subject (or is its first reading), the
+     *         moment worth a line in the command log; the frames within a phase are not
+     */
+    public boolean progress(String key, String subject, InstallProgress reading) {
+        long now = System.nanoTime();
+        Map<String, ProgressSnapshot> subjects = progress.computeIfAbsent(key, k -> new java.util.LinkedHashMap<>());
+        ProgressSnapshot previous = subjects.get(subject);
+        subjects.put(subject, previous == null
+                ? ProgressSnapshot.first(subject, reading, now)
+                : previous.advance(reading, now));
+        return previous == null || previous.progress().phase() != reading.phase();
+    }
+
+    /**
+     * The most recent progress reading of operation {@code key}, or null when its output has
+     * reported none. For a single-SDK operation that is simply its progress.
+     */
+    public @Nullable ProgressSnapshot progressFor(String key) {
+        Map<String, ProgressSnapshot> subjects = progress.get(key);
+        if (subjects == null) {
+            return null;
+        }
+        return subjects.values().stream()
+                .max(java.util.Comparator.comparingLong(ProgressSnapshot::receivedAtNanos))
+                .orElse(null);
+    }
+
+    /**
+     * Within operation {@code key}, the progress of whichever subject is a version of
+     * {@code toolName} — for finding one tool's bar inside a multi-tool upgrade.
+     */
+    public @Nullable ProgressSnapshot progressFor(String key, String toolName) {
+        Map<String, ProgressSnapshot> subjects = progress.get(key);
+        if (subjects == null) {
+            return null;
+        }
+        for (ProgressSnapshot snapshot : subjects.values()) {
+            if (snapshot.toolName().equals(toolName)) {
+                return snapshot;
+            }
+        }
+        return null;
+    }
+
+    /** Every subject of every operation currently reporting progress, oldest first. */
+    public List<ProgressSnapshot> allProgress() {
+        return progress.values().stream().flatMap(subjects -> subjects.values().stream()).toList();
+    }
+
+    // ==================== Toast ====================
+
+    /** How long a toast stays above the footer. */
+    private static final long TOAST_NANOS = 8_000_000_000L;
+
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private @Nullable String toast;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private boolean toastUndoable;
+    @Getter(AccessLevel.NONE)
+    @Setter(AccessLevel.NONE)
+    private long toastAtNanos;
+
+    /**
+     * Shows {@code message} on the line above the footer for a few seconds — the one-line
+     * receipt a config change leaves ("node 22.9.0 → 22.11.0 in mise.toml · z undo"), so the
+     * undo key is offered at the moment it is most likely to be wanted.
+     */
+    public void toast(String message, boolean undoable) {
+        toast = message;
+        toastUndoable = undoable;
+        toastAtNanos = System.nanoTime();
+    }
+
+    /** The current toast, or null once it has expired. */
+    public @Nullable String toast() {
+        return toast != null && System.nanoTime() - toastAtNanos < TOAST_NANOS ? toast : null;
+    }
+
+    /** Whether the current toast is about a change {@code z} can take back. */
+    public boolean toastUndoable() {
+        return toastUndoable;
+    }
+
+    // ==================== Batch marks ====================
+
+    /** Marks {@code tool} if it was not, unmarks it if it was; returns whether it is now marked. */
+    public boolean toggleMark(String tool) {
+        if (marked.remove(tool)) {
+            return false;
+        }
+        marked.add(tool);
+        return true;
+    }
+
+    public void mark(String tool) {
+        marked.add(tool);
+    }
+
+    public boolean isMarked(String tool) {
+        return marked.contains(tool);
+    }
+
+    public void clearMarks() {
+        marked.clear();
+    }
+
+    /** The marked tool names in the order they were marked; a copy, safe to iterate while acting. */
+    public List<String> marked() {
+        return List.copyOf(marked);
     }
 
     // ==================== Command log ====================

@@ -66,6 +66,12 @@ public class TamboApplication {
             System.exit(CommandLine.ExitCode.OK);
             return;
         }
+        String positionalError = command.validationError();
+        if (positionalError != null) {
+            cli.getErr().println("mise-tambo: " + positionalError);
+            System.exit(cli.getCommandSpec().exitCodeOnInvalidInput());
+            return;
+        }
 
         SpringApplication app = new SpringApplication(TamboApplication.class);
         app.addInitializers(ctx -> ctx.getBeanFactory().registerSingleton("tamboCommand", command));
